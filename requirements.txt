@@ -1,0 +1,19 @@
+# Simons-Dalio Regime Engine - Data Ingestion Dependencies
+# Python 3.10+
+
+# Data fetching
+yfinance>=0.2.33
+
+# Data processing
+pandas>=2.0.0
+numpy>=1.24.0
+
+# Visualization
+matplotlib>=3.7.0
+
+# Machine Learning (for future GMM clustering)
+scikit-learn>=1.3.0
+
+# Utilities
+python-dateutil>=2.8.2
+
