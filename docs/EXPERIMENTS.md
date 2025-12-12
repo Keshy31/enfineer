@@ -134,9 +134,100 @@ The simple GMM + PCA baseline (3.50 Sharpe spread) outperforms the complex neura
 
 ## Future Experiments
 
-1. **8D Autoencoder**: Test if 8 latent dims approaches GMM performance
-2. **Regime Stability**: Compare flicker between GMM (54.6%) and autoencoder
-3. **Transaction Costs**: Add friction to backtest (spreads, slippage)
-4. **Ensemble**: Combine GMM and autoencoder predictions
-5. **Alternative Assets**: Test on ETH-USD, S&P 500
+### Experiment 5: 8D Autoencoder (NEXT)
+
+**Date:** Pending  
+**Status:** Ready to run  
+**Priority:** HIGH
+
+**Hypothesis:** 8D latent space will achieve regime separation closer to GMM baseline while providing smoother regime assignments.
+
+**Planned Method:**
+- AutoencoderConfig(latent_dim=8)
+- Same walk-forward protocol
+- Compare Sharpe spread to 3D (0.79) and GMM (3.50)
+- Measure regime stability (fewer flips)
+
+**Success Criteria:**
+- Sharpe spread > 2.0
+- Regime stability > 60%
+
+---
+
+### Experiment 6: Statistical Significance Audit
+
+**Date:** Pending  
+**Status:** Infrastructure ready  
+**Priority:** HIGH
+
+**Hypothesis:** Bootstrap CI will reveal true confidence in regime performance.
+
+**Planned Method:**
+```python
+from src.analysis import bootstrap_sharpe_ci, validate_alpha
+result = bootstrap_sharpe_ci(regime_returns)
+# Require: CI lower bound > 0
+```
+
+**Success Criteria:**
+- Best regime: 95% CI lower bound > 0
+- Worst regime: 95% CI upper bound < 0
+- Spread significant after Bonferroni correction
+
+---
+
+### Experiment 7: Transaction Cost Survival
+
+**Date:** Pending  
+**Status:** Infrastructure ready  
+**Priority:** HIGH
+
+**Hypothesis:** Strategy survives realistic trading friction.
+
+**Planned Method:**
+```python
+from src.backtest import CostModel, analyze_cost_impact
+costs = CostModel(spread_bps=5, slippage_bps=2, commission_bps=3)
+result = analyze_cost_impact(returns, positions, costs)
+# Require: net_sharpe > 0.5
+```
+
+**Success Criteria:**
+- Net Sharpe (after 20 bps round-trip) > 0.5
+- Alpha survives costs: True
+
+---
+
+### Experiment 8: Factor Attribution
+
+**Date:** Pending  
+**Status:** Infrastructure ready  
+**Priority:** MEDIUM
+
+**Hypothesis:** Strategy alpha is orthogonal to known factors.
+
+**Planned Method:**
+```python
+from src.analysis import factor_attribution
+factors = pd.DataFrame({
+    'market': btc_returns,
+    'momentum': momentum_20d,
+})
+result = factor_attribution(strategy_returns, factors)
+# Require: residual alpha significant
+```
+
+**Success Criteria:**
+- Residual alpha t-stat > 2.0
+- R-squared < 0.5 (not just factor exposure)
+
+---
+
+### Future Experiments (Lower Priority)
+
+1. **Regime Stability**: Compare flicker between GMM (54.6%) and autoencoder
+2. **Ensemble**: Combine GMM + Autoencoder + HMM predictions
+3. **Alternative Assets**: Test on ETH-USD, S&P 500
+4. **Higher Frequency**: Test on hourly data
+5. **On-chain Features**: Add exchange flows, whale movements
 

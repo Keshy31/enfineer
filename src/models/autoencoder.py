@@ -23,7 +23,13 @@ from dataclasses import dataclass
 
 @dataclass
 class AutoencoderConfig:
-    """Configuration for the HedgeFundBrain autoencoder."""
+    """
+    Configuration for the HedgeFundBrain autoencoder.
+    
+    Version 1.2 Update: Default latent_dim changed from 3 to 8.
+    PCA analysis shows 17 dimensions explain 95% variance; 3D loses
+    too much signal. Use t-SNE/UMAP for visualization instead.
+    """
     # Input dimensions
     temporal_features: int = 9       # Simons features per timestep
     macro_features: int = 21         # Dalio features (static)
@@ -35,7 +41,9 @@ class AutoencoderConfig:
     macro_hidden: int = 32           # Macro encoder hidden
     
     # Latent space
-    latent_dim: int = 3              # 3D for visualization
+    # v1.2: Changed from 3 to 8 (see PROJ.md Section 4.3)
+    # 3D was too constrained (Sharpe spread 0.79 vs GMM baseline 3.50)
+    latent_dim: int = 8              # 8D recommended for regime detection
     
     # Decoder dimensions
     decoder_hidden: int = 64         # Decoder hidden size
@@ -52,6 +60,14 @@ class AutoencoderConfig:
             f"  lstm: hidden={self.lstm_hidden}, layers={self.lstm_layers}\n"
             f")"
         )
+
+
+# Preset configurations for different experiments
+CONFIG_PRESETS = {
+    "3d_visualization": AutoencoderConfig(latent_dim=3),  # Original, for viz only
+    "8d_recommended": AutoencoderConfig(latent_dim=8),    # Recommended default
+    "16d_high_capacity": AutoencoderConfig(latent_dim=16, lstm_hidden=128),
+}
 
 
 class TemporalEncoder(nn.Module):

@@ -1,10 +1,10 @@
 # The Simons-Dalio Regime Engine: Project Overview
 
-**Version 1.1**
+**Version 1.2**
 
 **Date: December 12, 2025**
 
-**Status: Validated with Walk-Forward Testing**
+**Status: Adding Statistical Rigor**
 
 ---
 
@@ -181,18 +181,107 @@ Excluded: `yield_10y` (raw level), raw price, raw index values.
 
 ---
 
-## 8. Conclusion
+## 8. Statistical Rigor Requirements
+
+**Version 1.2 Update:** A 3.50 Sharpe spread means nothing without confidence intervals. Before claiming "true alpha", we require:
+
+### 8.1. Bootstrap Confidence Intervals
+
+All Sharpe ratios must include 95% CI via bootstrap resampling:
+
+```python
+def bootstrap_sharpe_ci(returns, n_bootstrap=10000, ci=0.95):
+    sharpes = [resample(returns).mean() / resample(returns).std() * sqrt(252) 
+               for _ in range(n_bootstrap)]
+    return np.percentile(sharpes, [(1-ci)/2*100, (1+ci)/2*100])
+```
+
+**Requirement:** CI lower bound must be > 0 to claim statistical significance.
+
+### 8.2. Multiple Testing Correction
+
+With 8 regimes, we run 8+ hypothesis tests. Apply Bonferroni correction:
+- Raw p-value threshold: 0.05
+- Adjusted threshold: 0.05 / 8 = 0.00625
+
+### 8.3. Factor Attribution
+
+Prove alpha is orthogonal to known factors:
+- Market beta (BTC buy-and-hold)
+- Momentum factor (20-day return)
+- Volatility factor (VIX proxy)
+
+**Requirement:** Residual alpha after factor regression must remain significant.
+
+### 8.4. Transaction Cost Survival
+
+Alpha must survive realistic trading friction:
+- Spread: 5 bps
+- Slippage: 2 bps  
+- Commission: 1 bps
+- **Total round-trip: ~16 bps**
+
+**Requirement:** Net Sharpe after costs > 0.5
+
+---
+
+## 9. Roadmap to True Alpha
+
+### Phase 1: Statistical Foundation (Current Priority)
+| Task | Status | Impact |
+|------|--------|--------|
+| Bootstrap CI for Sharpe | Implemented | Know if signal is real |
+| Transaction cost model | Implemented | Know if tradeable |
+| Regime transition matrix | Implemented | Understand dynamics |
+| Factor attribution | Implemented | Prove orthogonal alpha |
+
+### Phase 2: Model Improvements
+| Task | Status | Impact |
+|------|--------|--------|
+| 8D autoencoder experiment | Pending | Beat GMM baseline |
+| Ensemble (GMM + AE + HMM) | Pending | Robustness |
+| Uncertainty quantification | Pending | Know when to sit out |
+
+### Phase 3: Feature Expansion
+| Task | Status | Impact |
+|------|--------|--------|
+| On-chain metrics | Pending | Crypto-native signals |
+| Sentiment data | Pending | Contrarian signals |
+| Microstructure features | Pending | Order flow |
+
+### Phase 4: Production Infrastructure
+| Task | Status | Impact |
+|------|--------|--------|
+| MLflow experiment tracking | Pending | Reproducibility |
+| Model versioning | Pending | Rollback capability |
+| Live paper trading | Pending | Real-world validation |
+
+---
+
+## 10. Success Criteria
+
+Before deploying capital, ALL criteria must be met:
+
+| Criterion | Threshold | Current |
+|-----------|-----------|---------|
+| Sharpe CI lower bound | > 0 | TBD |
+| Net Sharpe (after costs) | > 0.5 | TBD |
+| Factor-adjusted alpha | Significant | TBD |
+| Regime persistence | > 3 days avg | TBD |
+| OOS consistency | All folds positive | TBD |
+
+---
+
+## 11. Conclusion
 
 The Simons-Dalio Regime Engine represents a synthesis of three distinct investment philosophies: geometric modeling, macroeconomic context, and rigorous risk management.
 
-**Key Achievements:**
+**Key Achievements (v1.1):**
 1. Walk-forward validated regime detection (no look-ahead bias)
 2. Features that capture market dynamics, not time periods
 3. Clear separation between bullish and bearish regimes
 
-**Current Recommendation:** The walk-forward GMM baseline (17 PCA dimensions, 8 clusters) outperforms the 3D autoencoder. Future work should:
-1. Test 8D autoencoder latent space
-2. Compare regime stability (autoencoder may reduce "flicker")
-3. Integrate transaction costs into backtest
+**Current Focus (v1.2):**
+The walk-forward GMM baseline shows promise (3.50 Sharpe spread), but statistical rigor is incomplete. Priority is proving significance via bootstrap CI and transaction cost modeling before further model development.
 
-This architecture provides a scalable foundation for future research, including the integration of alternative data (sentiment) and reinforcement learning execution agents.
+**The Simons Lesson:** Renaissance succeeds not through complex models, but through rigorous statistical validation of thousands of weak signals. We must prove each edge is real before combining them.
