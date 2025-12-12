@@ -1,4 +1,4 @@
-# Simons-Dalio Regime Engine - Data Ingestion Dependencies
+# Simons-Dalio Regime Engine - Dependencies
 # Python 3.10+
 
 # Data fetching
@@ -7,6 +7,10 @@ yfinance>=0.2.33
 # Data processing
 pandas>=2.0.0
 numpy>=1.24.0
+
+# High-performance data storage
+pyarrow>=14.0.0
+duckdb>=0.9.0
 
 # Visualization
 matplotlib>=3.7.0

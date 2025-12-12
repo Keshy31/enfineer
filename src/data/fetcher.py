@@ -2,12 +2,87 @@
 Data Fetcher Module
 ===================
 Fetches OHLCV data from yfinance for Bitcoin and other assets.
+
+This module provides the raw API fetching layer. For cached access,
+use the DataManager from manager.py instead.
 """
 
 import pandas as pd
 import yfinance as yf
 from datetime import datetime, timedelta
 from typing import Optional
+
+
+def fetch_from_yfinance(
+    symbol: str,
+    start_date: str,
+    end_date: str,
+    interval: str = "1d",
+) -> Optional[pd.DataFrame]:
+    """
+    Fetch OHLCV data from yfinance (low-level API call).
+    
+    This is the core fetching function used by the DataManager.
+    For most use cases, prefer DataManager.get_ohlcv() which
+    handles caching automatically.
+    
+    Parameters
+    ----------
+    symbol : str
+        Ticker symbol (e.g., 'BTC-USD', '^TNX', 'AAPL').
+    start_date : str
+        Start date in 'YYYY-MM-DD' format.
+    end_date : str
+        End date in 'YYYY-MM-DD' format.
+    interval : str, default='1d'
+        Data interval: '1m', '5m', '15m', '30m', '1h', '1d', '1wk', '1mo'.
+        
+    Returns
+    -------
+    pd.DataFrame or None
+        OHLCV data with DatetimeIndex, or None if no data returned.
+        
+    Notes
+    -----
+    yfinance has limitations on intraday data:
+    - 1m: max 7 days
+    - 5m, 15m, 30m: max 60 days
+    - 1h: max 730 days
+    - 1d+: full history available
+    """
+    try:
+        ticker = yf.Ticker(symbol)
+        df = ticker.history(start=start_date, end=end_date, interval=interval)
+        
+        if df.empty:
+            return None
+        
+        # Keep only OHLCV columns
+        required_cols = ["Open", "High", "Low", "Close", "Volume"]
+        available_cols = [col for col in required_cols if col in df.columns]
+        
+        if not available_cols:
+            return None
+        
+        df = df[available_cols].copy()
+        
+        # Normalize index
+        df.index = pd.to_datetime(df.index)
+        if df.index.tz is not None:
+            df.index = df.index.tz_localize(None)
+        df.index.name = "Date"
+        
+        # Forward fill small gaps
+        df = df.ffill()
+        
+        # Sort by date
+        df = df.sort_index()
+        
+        return df
+        
+    except Exception as e:
+        print(f"Error fetching {symbol}: {e}")
+        return None
 
 
 def fetch_bitcoin_data(
