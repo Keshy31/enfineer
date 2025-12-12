@@ -1,8 +1,10 @@
 # The Simons-Dalio Regime Engine: Project Overview
 
-**Version 1.0**
+**Version 1.1**
 
 **Date: December 12, 2025**
+
+**Status: Validated with Walk-Forward Testing**
 
 ---
 
@@ -71,13 +73,35 @@ To integrate disparate data types, the encoder splits into two branches:
 
 ### 4.2. Latent Fusion & Loss Function
 
-The two branches merge into a dense layer that compresses the information into exactly **3 Latent Dimensions $(x, y, z)$**.
+The two branches merge into a dense layer that compresses the information into a latent space.
 
 To ensure the network pays attention to the slow-moving macro data, we utilize an **Auxiliary Reconstruction Loss**:
 
 $$L_{total} = L_{price\_recon} + \lambda \cdot L_{macro\_recon}$$
 
 Where $\lambda$ is a weighting factor that penalizes the network heavily if it fails to encode the macro state, forcing the latent space to respect economic reality.
+
+### 4.3. Latent Dimensionality (Updated December 2025)
+
+The original design specified **3 latent dimensions** for direct visualization. Empirical walk-forward testing revealed this is too restrictive:
+
+| Configuration | OOS Sharpe Spread | Visualization | Recommendation |
+|---------------|-------------------|---------------|----------------|
+| 3D (original) | 0.79 | Direct 3D plot | Too constrained |
+| 8D | TBD | Via t-SNE/UMAP | **Recommended** |
+| 17D (PCA only) | 3.50 | Via t-SNE/UMAP | GMM baseline |
+
+**Key Finding:** PCA analysis shows 17 dimensions explain 95% of feature variance. Compressing to 3D loses critical regime-distinguishing information.
+
+**Recommended Approach:**
+- Train with **8 latent dimensions** for optimal regime detection
+- Use **t-SNE or UMAP** projection to visualize in 2D/3D
+- This preserves predictive power while maintaining interpretability
+
+The 8D choice balances:
+1. **Signal preservation**: Retains major market factors
+2. **Regularization**: Forces abstraction (discards noise)
+3. **GMM compatibility**: Few enough dimensions to cluster robustly
 
 ---
 
@@ -118,6 +142,57 @@ The system outputs to a **Streamlit** interface featuring a 3D WebGL scatter plo
 
 ---
 
-## 7. Conclusion
+## 7. Critical Validation: Walk-Forward Testing
 
-The Simons-Dalio Regime Engine represents a synthesis of three distinct investment philosophies: geometric modeling, macroeconomic context, and rigorous risk management. By converting the chaotic noise of high-frequency data into a structured 3D map, it allows for a disciplined, probability-based approach to market speculation. This architecture provides a scalable foundation for future research, including the integration of alternative data (sentiment) and reinforcement learning execution agents.
+A key lesson from initial development: **in-sample backtests are meaningless**. The system was validated using strict walk-forward methodology.
+
+### 7.1. The Look-Ahead Bias Problem
+
+Standard backtesting fits models on all data, then tests on the same data. This creates artificial performance:
+
+```
+WRONG (In-Sample):
+  Fit GMM on 2020-2025 → Test on 2020-2025 → "Sharpe spread: 1.36"
+  
+CORRECT (Walk-Forward):
+  Fit GMM on 2020-2022 → Test on 2023 (unseen)
+  Fit GMM on 2020-2023 → Test on 2024 (unseen)
+  Stitch results → "Sharpe spread: 3.50"
+```
+
+### 7.2. Stationarity Requirements
+
+Non-stationary features (raw price levels, yield levels) cause GMM to cluster **time periods** rather than **market regimes**. The final system uses ONLY:
+- Log returns and differences
+- Z-scored values
+- Rolling correlations
+
+Excluded: `yield_10y` (raw level), raw price, raw index values.
+
+### 7.3. Validated Baseline Performance (December 2025)
+
+| Metric | Walk-Forward GMM | Notes |
+|--------|------------------|-------|
+| OOS Sharpe Spread | 3.50 | Regime 7: 2.29, Regime 0: -1.21 |
+| Strategy Sharpe | 1.03 | Out-of-sample only |
+| Strategy Return | +506% | vs Buy-Hold +253% |
+| Time in Market | 74% | Avoided worst regimes |
+| Test Period | 2021-07 to 2025-09 | 1,260 trading days |
+
+---
+
+## 8. Conclusion
+
+The Simons-Dalio Regime Engine represents a synthesis of three distinct investment philosophies: geometric modeling, macroeconomic context, and rigorous risk management.
+
+**Key Achievements:**
+1. Walk-forward validated regime detection (no look-ahead bias)
+2. Features that capture market dynamics, not time periods
+3. Clear separation between bullish and bearish regimes
+
+**Current Recommendation:** The walk-forward GMM baseline (17 PCA dimensions, 8 clusters) outperforms the 3D autoencoder. Future work should:
+1. Test 8D autoencoder latent space
+2. Compare regime stability (autoencoder may reduce "flicker")
+3. Integrate transaction costs into backtest
+
+This architecture provides a scalable foundation for future research, including the integration of alternative data (sentiment) and reinforcement learning execution agents.

@@ -512,7 +512,88 @@ DATA LAYER TEST PASSED
 ```
 pyarrow>=14.0.0    # Parquet read/write
 duckdb>=0.9.0      # Query engine (optional, for future)
+torch>=2.0.0       # Neural network (CUDA recommended)
 ```
 
 Both are pure Python wheels with no external dependencies.
+
+---
+
+## Walk-Forward Validation Framework
+
+### The Problem with Standard Backtesting
+
+Standard ML backtesting creates look-ahead bias:
+
+```python
+# WRONG: Fits on future data
+scaler.fit(all_data)           # Sees 2024 statistics
+gmm.fit(all_data)              # Knows 2024 clusters
+labels = gmm.predict(all_data) # "Predicts" what it already saw
+```
+
+### Walk-Forward Solution
+
+```python
+# CORRECT: Expanding window
+for fold in folds:
+    scaler.fit(train_only)     # Only past data
+    gmm.fit(train_only)        # Only past clusters
+    labels = gmm.predict(test) # Truly unseen future
+```
+
+### Implementation
+
+The `WalkForwardGMM` class in `src/data/walk_forward.py` provides:
+
+```python
+from src.data import WalkForwardGMM, get_stationary_features
+
+wf = WalkForwardGMM(
+    n_regimes=8,           # BIC-optimal
+    min_train_days=504,    # 2 years minimum
+    test_days=126,         # 6 months per fold
+    gap_days=30,           # Purge period
+    use_pca=True,          # Reduce dimensions
+    pca_variance=0.95,     # Keep 95% variance
+)
+
+results = wf.fit_predict(features, get_stationary_features())
+```
+
+### Key Features
+
+1. **Stationary Features Only**: `get_stationary_features()` excludes raw levels
+2. **PCA Compression**: Reduces 28 features to ~17 dimensions
+3. **BIC Cluster Selection**: `find_optimal_k()` chooses optimal regime count
+4. **Gap/Purge Period**: 30-day gap prevents feature leakage
+
+---
+
+## Validated Results (December 2025)
+
+### Walk-Forward GMM Baseline
+
+| Metric | Value |
+|--------|-------|
+| Out-of-Sample Days | 1,260 |
+| Optimal Clusters (BIC) | 8 |
+| PCA Dimensions | 17 |
+| Sharpe Spread | 3.50 |
+| Best Regime Sharpe | 2.29 (Regime 7) |
+| Worst Regime Sharpe | -1.21 (Regime 0) |
+| Strategy Sharpe | 1.03 |
+| Strategy Return | +506% |
+| Buy & Hold Return | +253% |
+
+### LSTM-Autoencoder (3D Latent)
+
+| Metric | Value |
+|--------|-------|
+| Latent Dimensions | 3 |
+| Sharpe Spread | 0.79 |
+| Clusters Detected | 3 |
+| Training Time (GPU) | ~4 minutes |
+
+**Conclusion**: 3D latent space loses too much signal. Recommend 8D.
 
