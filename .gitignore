@@ -55,7 +55,10 @@ data_test/
 *.pickle
 *.db
 
-# Logs
+# Model checkpoints (trained models - large files)
+checkpoints/
+
+# Logs & predictions
 *.log
 logs/
 

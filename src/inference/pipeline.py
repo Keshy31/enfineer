@@ -61,26 +61,27 @@ class InferenceResult:
             "inference_time": self.inference_time.isoformat(),
             "data_as_of": self.data_as_of.isoformat(),
             "data_quality": {
-                "score": self.data_quality.overall_score,
-                "can_proceed": self.data_quality.can_proceed,
+                "score": float(self.data_quality.overall_score),
+                "can_proceed": bool(self.data_quality.can_proceed),
                 "warnings": self.data_quality.warnings,
                 "errors": self.data_quality.errors,
                 "sources": {
                     k: {
                         "status": v.status.value,
-                        "age_hours": v.age_hours,
+                        "age_hours": float(v.age_hours) if v.age_hours else None,
                         "message": v.message,
                     }
                     for k, v in self.data_quality.sources.items()
                 }
             },
             "latent_vector": self.latent_vector.tolist(),
-            "regime": self.regime,
+            "regime": int(self.regime),
             "regime_probabilities": self.regime_probabilities.tolist(),
             "signal": self.signal.to_dict(),
-            "features_snapshot": self.features_snapshot,
+            "features_snapshot": {k: float(v) if v is not None else None 
+                                  for k, v in self.features_snapshot.items()},
             "model_id": self.model_id,
-            "model_sharpe_spread": self.model_sharpe_spread,
+            "model_sharpe_spread": float(self.model_sharpe_spread),
         }
     
     def to_json(self) -> str:
@@ -140,7 +141,7 @@ class InferencePipeline:
     def data_manager(self):
         """Lazy load DataManager to avoid import issues."""
         if self._data_manager is None:
-            from ..data import DataManager
+            from data import DataManager
             self._data_manager = DataManager("./data")
         return self._data_manager
     
@@ -167,7 +168,7 @@ class InferencePipeline:
             self.metadata = {}
         
         # Load model
-        from ..models.autoencoder import HedgeFundBrain, AutoencoderConfig
+        from models.autoencoder import HedgeFundBrain, AutoencoderConfig
         
         checkpoint_path = model_path / "model.pt"
         checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
@@ -238,15 +239,22 @@ class InferencePipeline:
         
         Uses the same feature pipeline as training.
         """
-        from ..data.alignment import align_to_crypto
-        from ..data.dalio_features import compute_combined_features
+        from data.alignment import align_to_crypto
+        from data.dalio_features import compute_combined_features
+        
+        # Prepare macro data dict
+        macro_dfs = {}
+        if data.get("^TNX") is not None and len(data.get("^TNX", [])) > 0:
+            macro_dfs["TNX"] = data["^TNX"]
+        if data.get("DX-Y.NYB") is not None and len(data.get("DX-Y.NYB", [])) > 0:
+            macro_dfs["DXY"] = data["DX-Y.NYB"]
+        if data.get("GLD") is not None and len(data.get("GLD", [])) > 0:
+            macro_dfs["GLD"] = data["GLD"]
         
         # Align all data to BTC dates
         aligned = align_to_crypto(
             crypto_df=data["BTC-USD"],
-            tnx_df=data.get("^TNX"),
-            dxy_df=data.get("DX-Y.NYB"),
-            gld_df=data.get("GLD"),
+            macro_dfs=macro_dfs,
         )
         
         # Compute combined features
@@ -261,8 +269,8 @@ class InferencePipeline:
         Returns temporal sequences and macro features, normalized
         using saved statistics.
         """
-        from ..data.training import get_temporal_feature_cols, get_macro_feature_cols
-        from ..data.walk_forward import get_stationary_features
+        from data.training import get_temporal_feature_cols, get_macro_feature_cols
+        from data.walk_forward import get_stationary_features
         
         # Get feature columns
         temporal_cols = get_temporal_feature_cols()
@@ -422,14 +430,21 @@ class InferencePipeline:
         log_path = self.log_dir / f"{date_str}.json"
         
         # Load existing predictions for today
+        daily_log = {"date": date_str, "predictions": []}
         if log_path.exists():
-            with open(log_path, 'r') as f:
-                daily_log = json.load(f)
-        else:
-            daily_log = {"date": date_str, "predictions": []}
+            try:
+                with open(log_path, 'r') as f:
+                    daily_log = json.load(f)
+            except json.JSONDecodeError:
+                # File is corrupted, start fresh
+                print(f"  Warning: Existing log file corrupted, creating new one")
+                daily_log = {"date": date_str, "predictions": []}
+        
+        # Get prediction data
+        pred_data = result.to_dict()
         
         # Append new prediction
-        daily_log["predictions"].append(result.to_dict())
+        daily_log["predictions"].append(pred_data)
         
         # Save
         with open(log_path, 'w') as f:

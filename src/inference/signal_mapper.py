@@ -69,12 +69,12 @@ class SignalResult:
         return {
             "signal": self.signal.value,
             "confidence": self.confidence.value,
-            "regime": self.regime,
+            "regime": int(self.regime),
             "regime_name": self.regime_name,
-            "regime_sharpe": self.regime_sharpe,
-            "regime_sharpe_ci_lower": self.regime_sharpe_ci[0],
-            "regime_sharpe_ci_upper": self.regime_sharpe_ci[1],
-            "gmm_probability": self.gmm_probability,
+            "regime_sharpe": float(self.regime_sharpe),
+            "regime_sharpe_ci_lower": float(self.regime_sharpe_ci[0]),
+            "regime_sharpe_ci_upper": float(self.regime_sharpe_ci[1]),
+            "gmm_probability": float(self.gmm_probability),
             "position_recommendation": self.position_recommendation,
         }
     
