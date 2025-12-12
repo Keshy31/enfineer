@@ -1,6 +1,6 @@
 # Technical Architecture: Data Layer
 
-**Version 1.0**
+**Version 1.1**
 
 **Date: December 12, 2025**
 
@@ -8,46 +8,47 @@
 
 ## Overview
 
-This document describes the technical architecture of the data caching layer for the Simons-Dalio Regime Engine. The system uses a tiered storage approach with **Apache Parquet** for OHLCV data and **SQLite** for metadata tracking, enabling high-performance backtesting without redundant API calls.
+This document describes the technical architecture of the data caching layer for the Simons-Dalio Regime Engine. The system uses a tiered storage approach with **Apache Parquet** for both OHLCV data and computed features, with **SQLite** for metadata tracking. This enables high-performance backtesting without redundant API calls or feature recomputation.
 
 ---
 
 ## Architecture Diagram
 
 ```
-┌────────────────────────────────────────────────────────────────────┐
-│                    DATA LAYER ARCHITECTURE                         │
-├────────────────────────────────────────────────────────────────────┤
-│                                                                    │
-│  ┌──────────────┐         ┌──────────────────────────────────────┐│
-│  │   yfinance   │────────▶│         DataManager                  ││
-│  │   (or any    │  fetch  │                                      ││
-│  │    API)      │  once   │  • Check if data exists locally      ││
-│  └──────────────┘         │  • Fetch only missing date ranges    ││
-│                           │  • Upsert to Parquet                 ││
-│                           │  • Update metadata in SQLite         ││
-│                           └──────────────┬───────────────────────┘│
-│                                          │                        │
-│                    ┌─────────────────────┴────────────────────┐   │
-│                    │                                          │   │
-│                    ▼                                          ▼   │
-│  ┌─────────────────────────────────┐    ┌────────────────────────┐│
-│  │     PARQUET FILES               │    │   SQLITE (metadata)    ││
-│  │     (Columnar Storage)          │    │   (Bookkeeping)        ││
-│  │                                 │    │                        ││
-│  │  data/                          │    │  • symbols table       ││
-│  │  └── market/                    │    │  • data_coverage table ││
-│  │      ├── BTC-USD/               │    │  • last_updated times  ││
-│  │      │   ├── 1d.parquet         │    │                        ││
-│  │      │   ├── 1h.parquet         │    └────────────────────────┘│
-│  │      │   └── 15m.parquet        │                              │
-│  │      ├── ETH-USD/               │                              │
-│  │      │   └── ...                │                              │
-│  │      └── ^TNX/                  │                              │
-│  │          └── 1d.parquet         │                              │
-│  └─────────────────────────────────┘                              │
-│                                                                    │
-└────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────┐
+│                      DATA LAYER ARCHITECTURE                             │
+├──────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│  ┌──────────────┐         ┌────────────────────────────────────────────┐ │
+│  │   yfinance   │────────▶│              DataManager                   │ │
+│  │   (or any    │  fetch  │                                            │ │
+│  │    API)      │  once   │  get_ohlcv()    │    get_features()        │ │
+│  └──────────────┘         │  • Smart fetch  │    • Param-aware cache   │ │
+│                           │  • Date gaps    │    • Hash-based lookup   │ │
+│                           └────────┬────────┴──────────┬───────────────┘ │
+│                                    │                   │                 │
+│         ┌──────────────────────────┴───────────────────┴──────────┐      │
+│         │                                                         │      │
+│         ▼                                                         ▼      │
+│  ┌─────────────────────────────────┐    ┌────────────────────────────┐   │
+│  │     PARQUET FILES               │    │   SQLITE (metadata)        │   │
+│  │     (Columnar Storage)          │    │   (Bookkeeping)            │   │
+│  │                                 │    │                            │   │
+│  │  data/                          │    │  • symbols table           │   │
+│  │  ├── market/        (OHLCV)     │    │  • data_coverage table     │   │
+│  │  │   ├── BTC-USD/               │    │  • feature_cache table     │   │
+│  │  │   │   └── 1d.parquet         │    │                            │   │
+│  │  │   └── ETH-USD/               │    │  Tracks:                   │   │
+│  │  │       └── 1d.parquet         │    │  • What data we have       │   │
+│  │  │                              │    │  • Date range coverage     │   │
+│  │  └── features/      (Computed)  │    │  • Feature params hash     │   │
+│  │      └── BTC-USD/               │    │  • Last update times       │   │
+│  │          ├── simons_1d_a1b2.pq  │    └────────────────────────────┘   │
+│  │          └── simons_1d_c3d4.pq  │                                     │
+│  │              (different params)  │                                     │
+│  └─────────────────────────────────┘                                     │
+│                                                                          │
+└──────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -260,19 +261,29 @@ dm.clear_cache(symbol="BTC-USD", timeframe="1h")  # Specific
 
 ```
 data/
-├── market/                    # OHLCV data
-│   └── {SYMBOL}/              # Symbol directory (/ -> _)
+├── market/                              # Raw OHLCV data
+│   └── {SYMBOL}/
 │       └── {timeframe}.parquet
-└── metadata.db                # SQLite tracking
+├── features/                            # Computed features
+│   └── {SYMBOL}/
+│       └── {feature_set}_{timeframe}_{hash}.parquet
+└── metadata.db                          # SQLite tracking
 ```
 
-### Examples
+### OHLCV Examples
 
 | Symbol | Timeframe | Path |
 |--------|-----------|------|
 | BTC-USD | 1d | `data/market/BTC-USD/1d.parquet` |
 | ^TNX | 1d | `data/market/^TNX/1d.parquet` |
 | DX-Y.NYB | 1h | `data/market/DX-Y.NYB/1h.parquet` |
+
+### Feature Cache Examples
+
+| Symbol | Params | Path |
+|--------|--------|------|
+| BTC-USD | window=30 | `data/features/BTC-USD/simons_1d_a1b2c3d4.parquet` |
+| BTC-USD | window=20 | `data/features/BTC-USD/simons_1d_e5f6g7h8.parquet` |
 
 ---
 
@@ -325,11 +336,109 @@ PyArrow uses memory-mapped I/O for large files, enabling access to datasets larg
 
 ---
 
+## Feature Caching
+
+Feature caching prevents redundant computation by storing computed features (e.g., Simons features) with a hash of their parameters.
+
+### The Problem
+
+```python
+# Without caching: recomputes every time
+for _ in range(100):  # 100 backtest iterations
+    features = compute_simons_features(ohlcv, window=30)  # Slow!
+```
+
+### The Solution: Parameter Hashing
+
+```python
+# Hash the parameters
+params = {"window": 30, "sigma_floor": 0.001, "version": "1.0"}
+params_hash = hashlib.md5(json.dumps(params)).hexdigest()[:8]
+# Result: "a1b2c3d4"
+```
+
+Same parameters → same hash → cache hit → instant load.
+Different parameters → different hash → cache miss → compute and cache.
+
+### API
+
+```python
+dm = DataManager("./data")
+
+# First call: computes and caches
+features = dm.get_features("BTC-USD", "1d", window=30, sigma_floor=0.001)
+
+# Second call (same params): loads from cache instantly
+features = dm.get_features("BTC-USD", "1d", window=30, sigma_floor=0.001)
+
+# Different params: computes and caches separately
+features = dm.get_features("BTC-USD", "1d", window=20, sigma_floor=0.001)
+
+# Force recompute (e.g., after code change)
+features = dm.get_features("BTC-USD", "1d", window=30, force_recompute=True)
+
+# List cached features
+dm.list_cached_features("BTC-USD")
+# [FeatureCacheInfo(params_hash='a1b2c3d4', ...), ...]
+
+# Clear feature cache
+dm.clear_feature_cache(symbol="BTC-USD")
+```
+
+### SQLite Schema
+
+```sql
+CREATE TABLE feature_cache (
+    id INTEGER PRIMARY KEY,
+    symbol_id INTEGER REFERENCES symbols(id),
+    timeframe TEXT NOT NULL,
+    feature_set TEXT NOT NULL,       -- 'simons', 'dalio', etc.
+    params_hash TEXT NOT NULL,       -- MD5 hash (first 8 chars)
+    params_json TEXT,                -- Full params for reference
+    row_count INTEGER,
+    file_path TEXT,
+    computed_at TIMESTAMP,
+    UNIQUE(symbol_id, timeframe, feature_set, params_hash)
+);
+```
+
+### Cache Flow
+
+```
+Request: get_features("BTC-USD", "1d", window=30)
+                        │
+                        ▼
+         ┌──────────────────────────────┐
+         │  Compute params_hash         │
+         │  {"window":30,...} → "a1b2"  │
+         └──────────────┬───────────────┘
+                        │
+                        ▼
+         ┌──────────────────────────────┐
+         │  Check metadata.db           │
+         │  SELECT * FROM feature_cache │
+         │  WHERE params_hash = 'a1b2'  │
+         └──────────────┬───────────────┘
+                        │
+              ┌─────────┴─────────┐
+              │                   │
+         [Cache HIT]         [Cache MISS]
+              │                   │
+              ▼                   ▼
+    ┌─────────────────┐  ┌─────────────────┐
+    │  Load from      │  │  Compute        │
+    │  Parquet        │  │  features       │
+    │  (instant)      │  │  Save to cache  │
+    └─────────────────┘  └─────────────────┘
+```
+
+---
+
 ## Future Enhancements
 
 ### Planned
 
-1. **Feature Caching**: Store pre-computed Simons features
+1. ~~**Feature Caching**: Store pre-computed Simons features~~ ✅ Implemented
 2. **DuckDB Queries**: Cross-asset analytics with SQL
 3. **Data Quality**: Validation, gap detection, repair
 
@@ -357,24 +466,41 @@ Run the data layer test suite:
 python scripts/test_data_layer.py
 ```
 
+The test covers 7 scenarios:
+
+| Test | Description |
+|------|-------------|
+| 1. First fetch | Download from yfinance, save to Parquet |
+| 2. Cache speed | Load from Parquet (should be faster) |
+| 3. Incremental | Detect gaps, fetch only missing data |
+| 4. Integrity | Verify round-trip data preservation |
+| 5. Feature compute | Compute Simons features, cache them |
+| 6. Feature cache | Load cached features (should be instant) |
+| 7. Feature params | Different params = different cache entry |
+
 Expected output:
 
 ```
-[1/4] First fetch (yfinance -> Parquet)...
+[1/7] First fetch (yfinance -> Parquet)...
   ✓ Fetched 92 rows from yfinance in 2.15s
-  ✓ Saved to market/BTC-USD/1d.parquet (4.2 KB)
 
-[2/4] Second fetch (Parquet only)...
+[2/7] Second fetch (Parquet only)...
   ✓ Loaded 92 rows from Parquet in 0.02s
   ✓ 107x faster than API fetch
 
-[3/4] Incremental update test...
-  ✓ Extended coverage: 92 -> 153 rows
-  ✓ Fetched 61 new rows in 1.87s
+...
 
-[4/4] Data integrity check...
-  ✓ Round-trip verified: 50 rows preserved
-  ✓ Values match within tolerance
+[5/7] Feature computation (first time)...
+  ✓ Computed 92 rows with 14 features
+  ✓ Z-scores bounded (max: 4.23)
+
+[6/7] Feature cache hit (same params)...
+  ✓ Loaded from cache in 0.0012s
+  ✓ 150x faster than computation
+
+[7/7] Feature param change (different params)...
+  ✓ Different params produce different hashes
+  ✓ Multiple cache entries: 2
 
 DATA LAYER TEST PASSED
 ```

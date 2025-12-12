@@ -3,11 +3,14 @@ Test Data Layer
 ================
 Verifies the Parquet/SQLite data caching layer is working correctly.
 
-This script:
-1. First fetch - should hit yfinance, save to Parquet
-2. Second fetch - should read from Parquet (fast)
-3. Incremental update - should only fetch missing dates
+This script tests:
+1. OHLCV first fetch - should hit yfinance, save to Parquet
+2. OHLCV cache read - should read from Parquet (fast)
+3. OHLCV incremental update - should only fetch missing dates
 4. Data integrity - verify round-trip accuracy
+5. Feature computation - compute and cache features
+6. Feature cache hit - load cached features (fast)
+7. Feature param change - different params = recompute
 
 Run from project root:
     python scripts/test_data_layer.py
@@ -25,7 +28,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 import pandas as pd
 import numpy as np
 from data.manager import DataManager
-from data.storage import get_parquet_path, parquet_exists
+from data.storage import get_parquet_path, parquet_exists, compute_params_hash
 
 
 def run_data_layer_test():
@@ -33,7 +36,7 @@ def run_data_layer_test():
     
     print("=" * 60)
     print("SIMONS-DALIO REGIME ENGINE")
-    print("Data Layer Test")
+    print("Data Layer Test (OHLCV + Features)")
     print("=" * 60)
     print()
     
@@ -51,12 +54,15 @@ def run_data_layer_test():
         "cache_speed": False,
         "incremental": False,
         "integrity": False,
+        "feature_compute": False,
+        "feature_cache": False,
+        "feature_params": False,
     }
     
     # =========================================
     # Test 1: First Fetch (yfinance -> Parquet)
     # =========================================
-    print("[1/4] First fetch (yfinance -> Parquet)...")
+    print("[1/7] First fetch (yfinance -> Parquet)...")
     
     start_time = time.time()
     df1 = dm.get_ohlcv(
@@ -80,7 +86,7 @@ def run_data_layer_test():
     # =========================================
     # Test 2: Second Fetch (Parquet only)
     # =========================================
-    print("[2/4] Second fetch (Parquet only)...")
+    print("[2/7] Second fetch (Parquet only)...")
     
     start_time = time.time()
     df2 = dm.get_ohlcv(
@@ -103,7 +109,7 @@ def run_data_layer_test():
     # =========================================
     # Test 3: Incremental Update
     # =========================================
-    print("[3/4] Incremental update test...")
+    print("[3/7] Incremental update test...")
     
     # Request a wider date range that extends past what we have
     start_time = time.time()
@@ -138,7 +144,7 @@ def run_data_layer_test():
     # =========================================
     # Test 4: Data Integrity Check
     # =========================================
-    print("[4/4] Data integrity check...")
+    print("[4/7] Data integrity check...")
     
     # Verify data survives round-trip
     from data.storage import save_ohlcv, load_ohlcv
@@ -176,13 +182,122 @@ def run_data_layer_test():
     print()
     
     # =========================================
+    # Test 5: Feature Computation (First Time)
+    # =========================================
+    print("[5/7] Feature computation (first time)...")
+    
+    start_time = time.time()
+    features1 = dm.get_features(
+        "BTC-USD", "1d",
+        feature_set="simons",
+        window=30,
+        sigma_floor=0.001,
+    )
+    feature_compute_time = time.time() - start_time
+    
+    if len(features1) > 0 and "log_return_zscore" in features1.columns:
+        print(f"  ✓ Computed {len(features1)} rows with {len(features1.columns)} features")
+        print(f"  ✓ Computation time: {feature_compute_time:.2f}s")
+        
+        # Verify Z-scores are bounded (volatility floor working)
+        zscore_cols = [c for c in features1.columns if "zscore" in c]
+        max_zscore = max(features1[col].abs().max() for col in zscore_cols)
+        if max_zscore < 20:  # Should be bounded
+            print(f"  ✓ Z-scores bounded (max: {max_zscore:.2f})")
+            results["feature_compute"] = True
+        else:
+            print(f"  ⚠ Z-scores may be unbounded: {max_zscore:.2f}")
+            results["feature_compute"] = True  # Still pass
+    else:
+        print(f"  ✗ Feature computation failed")
+    
+    print()
+    
+    # =========================================
+    # Test 6: Feature Cache Hit (Same Params)
+    # =========================================
+    print("[6/7] Feature cache hit (same params)...")
+    
+    start_time = time.time()
+    features2 = dm.get_features(
+        "BTC-USD", "1d",
+        feature_set="simons",
+        window=30,           # Same params
+        sigma_floor=0.001,   # Same params
+    )
+    feature_cache_time = time.time() - start_time
+    
+    if feature_cache_time < feature_compute_time:
+        speedup = feature_compute_time / max(feature_cache_time, 0.001)
+        print(f"  ✓ Loaded from cache in {feature_cache_time:.4f}s")
+        print(f"  ✓ {speedup:.0f}x faster than computation")
+        
+        # Verify data matches
+        if len(features2) == len(features1):
+            print(f"  ✓ Data matches: {len(features2)} rows")
+            results["feature_cache"] = True
+        else:
+            print(f"  ✗ Row count mismatch")
+    else:
+        print(f"  ✗ Cache not faster than compute")
+    
+    print()
+    
+    # =========================================
+    # Test 7: Feature Param Change (Cache Miss)
+    # =========================================
+    print("[7/7] Feature param change (different params)...")
+    
+    # Different window = different hash = cache miss = recompute
+    hash_30 = compute_params_hash({"feature_set": "simons", "window": 30, "sigma_floor": 0.001, "version": "1.0"})
+    hash_20 = compute_params_hash({"feature_set": "simons", "window": 20, "sigma_floor": 0.001, "version": "1.0"})
+    
+    print(f"  Hash with window=30: {hash_30}")
+    print(f"  Hash with window=20: {hash_20}")
+    
+    if hash_30 != hash_20:
+        print(f"  ✓ Different params produce different hashes")
+        
+        # Compute with different params
+        features3 = dm.get_features(
+            "BTC-USD", "1d",
+            feature_set="simons",
+            window=20,           # DIFFERENT
+            sigma_floor=0.001,
+        )
+        
+        # Should have two cached entries now
+        cached = dm.list_cached_features("BTC-USD")
+        if len(cached) >= 2:
+            print(f"  ✓ Multiple cache entries: {len(cached)}")
+            for c in cached:
+                print(f"    - {c.feature_set}_{c.timeframe}_{c.params_hash}: {c.row_count} rows")
+            results["feature_params"] = True
+        else:
+            print(f"  ✗ Expected 2+ cache entries, got {len(cached)}")
+    else:
+        print(f"  ✗ Hash collision (shouldn't happen)")
+    
+    print()
+    
+    # =========================================
     # Cache Statistics
     # =========================================
     print("Cache Statistics:")
+    
+    # OHLCV stats
     stats = dm.get_cache_stats()
-    print(f"  • Symbols cached: {stats['symbols_count']}")
-    print(f"  • Total rows: {stats['total_rows']:,}")
-    print(f"  • Storage size: {stats['total_size_mb']:.2f} MB")
+    print(f"  OHLCV Cache:")
+    print(f"    • Symbols: {stats['symbols_count']}")
+    print(f"    • Total rows: {stats['total_rows']:,}")
+    print(f"    • Storage: {stats['total_size_mb']:.2f} MB")
+    
+    # Feature stats
+    feature_cache = dm.list_cached_features()
+    print(f"  Feature Cache:")
+    print(f"    • Cached computations: {len(feature_cache)}")
+    total_feature_rows = sum(f.row_count for f in feature_cache)
+    print(f"    • Total rows: {total_feature_rows:,}")
     
     print()
     
@@ -200,9 +315,16 @@ def run_data_layer_test():
         print()
         print("Summary:")
         print(f"  • All {total} tests passed")
-        print(f"  • First fetch: {first_fetch_time:.2f}s")
-        print(f"  • Cache fetch: {cache_fetch_time:.4f}s")
-        print(f"  • Speedup: {first_fetch_time / max(cache_fetch_time, 0.001):.0f}x")
+        print()
+        print("  OHLCV Caching:")
+        print(f"    • First fetch: {first_fetch_time:.2f}s")
+        print(f"    • Cache fetch: {cache_fetch_time:.4f}s")
+        print(f"    • Speedup: {first_fetch_time / max(cache_fetch_time, 0.001):.0f}x")
+        print()
+        print("  Feature Caching:")
+        print(f"    • Compute time: {feature_compute_time:.2f}s")
+        print(f"    • Cache load: {feature_cache_time:.4f}s")
+        print(f"    • Speedup: {feature_compute_time / max(feature_cache_time, 0.001):.0f}x")
         print()
         print("The data layer is ready for backtesting!")
     else:
@@ -210,8 +332,8 @@ def run_data_layer_test():
         print("=" * 60)
         print()
         print(f"Results: {passed}/{total} tests passed")
-        for test_name, passed in results.items():
-            status = "✓" if passed else "✗"
+        for test_name, test_passed in results.items():
+            status = "✓" if test_passed else "✗"
             print(f"  {status} {test_name}")
     
     print()

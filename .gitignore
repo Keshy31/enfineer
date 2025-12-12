@@ -48,7 +48,7 @@ output/
 Thumbs.db
 
 # Data cache (local market data - do not commit)
-data/
+/data/
 data_test/
 *.parquet
 *.pkl
