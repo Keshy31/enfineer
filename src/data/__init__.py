@@ -44,6 +44,23 @@ from .storage import (
     save_features, load_features, compute_params_hash,
 )
 from .metadata import MetadataDB, CoverageInfo, FeatureCacheInfo
+from .splits import (
+    TimeSeriesSplit,
+    create_time_series_split,
+    walk_forward_splits,
+    verify_no_leakage,
+    WalkForwardFold,
+    FeatureScaler,
+)
+from .training import (
+    TrainingDataset,
+    create_training_dataset,
+    create_sequences,
+    split_dataset,
+    normalize_dataset,
+    get_temporal_feature_cols,
+    get_macro_feature_cols,
+)
 
 __all__ = [
     # High-level interface
@@ -77,4 +94,19 @@ __all__ = [
     "MetadataDB",
     "CoverageInfo",
     "FeatureCacheInfo",
+    # Time Series Splits
+    "TimeSeriesSplit",
+    "create_time_series_split",
+    "walk_forward_splits",
+    "verify_no_leakage",
+    "WalkForwardFold",
+    "FeatureScaler",
+    # Training Dataset
+    "TrainingDataset",
+    "create_training_dataset",
+    "create_sequences",
+    "split_dataset",
+    "normalize_dataset",
+    "get_temporal_feature_cols",
+    "get_macro_feature_cols",
 ]
