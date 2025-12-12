@@ -139,7 +139,6 @@ class AutoencoderTrainer:
                 mode='min',
                 factor=self.config.lr_factor,
                 patience=self.config.lr_patience,
-                verbose=True,
             )
         elif self.config.lr_scheduler == 'cosine':
             return torch.optim.lr_scheduler.CosineAnnealingLR(
