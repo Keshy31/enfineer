@@ -46,6 +46,12 @@ from .storage import (
 from .metadata import MetadataDB, CoverageInfo, FeatureCacheInfo
 from .fetcher import fetch_from_yfinance
 from .features import compute_simons_features
+from .alignment import align_to_crypto, find_common_date_range, trim_to_common_range
+from .dalio_features import compute_dalio_features, compute_combined_features
+
+
+# Default macro symbols for alignment
+DEFAULT_MACRO_SYMBOLS = ["^TNX", "DX-Y.NYB", "GLD"]
 
 
 class DataManager:
@@ -284,6 +290,91 @@ class DataManager:
             print("✓ Cleared all cached data")
 
     # =========================================
+    # Alignment Methods (Crypto + Macro)
+    # =========================================
+    
+    def get_aligned_data(
+        self,
+        primary_symbol: str = "BTC-USD",
+        macro_symbols: Optional[list[str]] = None,
+        timeframe: str = "1d",
+        start: Optional[str] = None,
+        end: Optional[str] = None,
+        trim_to_common: bool = True,
+    ) -> pd.DataFrame:
+        """
+        Get aligned data combining crypto with macro assets.
+        
+        Fetches all symbols and aligns macro data to the crypto's
+        7-day trading schedule using forward-fill for weekends.
+        
+        Parameters
+        ----------
+        primary_symbol : str, default='BTC-USD'
+            Primary crypto symbol (trades 7 days/week).
+        macro_symbols : list[str], optional
+            Macro symbols to include. Defaults to ['^TNX', 'DX-Y.NYB', 'GLD'].
+        timeframe : str, default='1d'
+            Data timeframe.
+        start : str, optional
+            Start date in 'YYYY-MM-DD' format.
+        end : str, optional
+            End date in 'YYYY-MM-DD' format.
+        trim_to_common : bool, default=True
+            If True, trim to date range where all symbols have data.
+            
+        Returns
+        -------
+        pd.DataFrame
+            Aligned DataFrame with crypto OHLCV and macro columns.
+            Macro columns are prefixed (e.g., 'TNX_Close', 'DXY_Close').
+            
+        Example
+        -------
+        >>> dm = DataManager("./data")
+        >>> aligned = dm.get_aligned_data("BTC-USD", start="2020-01-01")
+        >>> aligned.columns
+        Index(['Open', 'High', 'Low', 'Close', 'Volume',
+               'TNX_Close', 'DXY_Close', 'GLD_Close', ...])
+        """
+        if macro_symbols is None:
+            macro_symbols = DEFAULT_MACRO_SYMBOLS.copy()
+        
+        print(f"⟳ Fetching aligned data: {primary_symbol} + {macro_symbols}")
+        
+        # Fetch primary (crypto) data
+        crypto_df = self.get_ohlcv(primary_symbol, timeframe, start=start, end=end)
+        
+        # Fetch macro data
+        macro_dfs = {}
+        for symbol in macro_symbols:
+            try:
+                macro_dfs[symbol] = self.get_ohlcv(symbol, timeframe, start=start, end=end)
+            except Exception as e:
+                print(f"  ⚠ Could not fetch {symbol}: {e}")
+        
+        if not macro_dfs:
+            print("  ⚠ No macro data available, returning crypto only")
+            return crypto_df
+        
+        # Optionally trim to common date range
+        if trim_to_common:
+            all_dfs = {primary_symbol: crypto_df, **macro_dfs}
+            common_start, common_end = find_common_date_range(all_dfs)
+            print(f"  Common date range: {common_start.strftime('%Y-%m-%d')} to {common_end.strftime('%Y-%m-%d')}")
+            
+            crypto_df = crypto_df.loc[common_start:common_end]
+            macro_dfs = {k: v.loc[common_start:common_end] for k, v in macro_dfs.items()}
+        
+        # Align macro to crypto dates
+        print("  Aligning macro data to crypto dates...")
+        aligned = align_to_crypto(crypto_df, macro_dfs)
+        
+        print(f"  ✓ Aligned data: {len(aligned)} rows, {len(aligned.columns)} columns")
+        
+        return aligned
+    
+    # =========================================
     # Feature Caching Methods
     # =========================================
     
@@ -296,6 +387,7 @@ class DataManager:
         sigma_floor: float = 0.001,
         start: Optional[str] = None,
         end: Optional[str] = None,
+        macro_symbols: Optional[list[str]] = None,
         force_recompute: bool = False,
     ) -> pd.DataFrame:
         """
@@ -315,7 +407,10 @@ class DataManager:
         timeframe : str, default='1d'
             Data timeframe.
         feature_set : str, default='simons'
-            Which feature set to compute. Currently only 'simons' is supported.
+            Which feature set to compute:
+            - 'simons': Price-based features only (log returns, momentum, volatility)
+            - 'dalio': Macro features only (yields, dollar, gold, correlations)
+            - 'combined': Both Simons and Dalio features (full neural network input)
         window : int, default=30
             Rolling window for feature calculations.
         sigma_floor : float, default=0.001
@@ -324,6 +419,9 @@ class DataManager:
             Start date for the OHLCV data.
         end : str, optional
             End date for the OHLCV data.
+        macro_symbols : list[str], optional
+            Macro symbols for 'dalio' or 'combined' feature sets.
+            Defaults to ['^TNX', 'DX-Y.NYB', 'GLD'].
         force_recompute : bool, default=False
             If True, recompute even if cached.
             
@@ -335,21 +433,30 @@ class DataManager:
         Example
         -------
         >>> dm = DataManager("./data")
+        >>> # Simons features (price-based)
         >>> features = dm.get_features("BTC-USD", window=30)
-        >>> # First call: computes and caches
-        >>> features = dm.get_features("BTC-USD", window=30)
-        >>> # Second call: loads from cache instantly
-        >>> features = dm.get_features("BTC-USD", window=20)
+        >>> 
+        >>> # Combined features (price + macro)
+        >>> features = dm.get_features("BTC-USD", feature_set="combined")
+        >>> 
         >>> # Different params: computes and caches separately
+        >>> features = dm.get_features("BTC-USD", window=20)
         """
+        if macro_symbols is None:
+            macro_symbols = DEFAULT_MACRO_SYMBOLS.copy()
+        
         # Build parameters dict for hashing
         # Include everything that affects the output
         params = {
             "feature_set": feature_set,
             "window": window,
             "sigma_floor": sigma_floor,
-            "version": "1.0",  # Bump this if feature code changes
+            "version": "1.1",  # Bumped for combined features support
         }
+        
+        # Include macro symbols in hash for combined/dalio features
+        if feature_set in ("combined", "dalio"):
+            params["macro_symbols"] = sorted(macro_symbols)
         
         params_hash = compute_params_hash(params)
         
@@ -376,25 +483,54 @@ class DataManager:
         
         start_time = time.time()
         
-        # Step 1: Get OHLCV data (uses OHLCV cache)
-        ohlcv = self.get_ohlcv(symbol, timeframe, start=start, end=end)
-        
-        # Step 2: Compute features
+        # Step 1: Get data (different paths for different feature sets)
         if feature_set == "simons":
+            # Simple path: just need OHLCV
+            ohlcv = self.get_ohlcv(symbol, timeframe, start=start, end=end)
             features = compute_simons_features(
                 ohlcv, window=window, sigma_floor=sigma_floor
             )
+            
+        elif feature_set == "dalio":
+            # Need aligned data
+            aligned = self.get_aligned_data(
+                primary_symbol=symbol,
+                macro_symbols=macro_symbols,
+                timeframe=timeframe,
+                start=start,
+                end=end,
+            )
+            features = compute_dalio_features(
+                aligned, window=window, sigma_floor=sigma_floor
+            )
+            
+        elif feature_set == "combined":
+            # Need aligned data + both feature sets
+            aligned = self.get_aligned_data(
+                primary_symbol=symbol,
+                macro_symbols=macro_symbols,
+                timeframe=timeframe,
+                start=start,
+                end=end,
+            )
+            features = compute_combined_features(
+                aligned, window=window, sigma_floor=sigma_floor
+            )
+            
         else:
-            raise ValueError(f"Unknown feature set: {feature_set}")
+            raise ValueError(
+                f"Unknown feature set: {feature_set}. "
+                f"Valid options: 'simons', 'dalio', 'combined'"
+            )
         
         compute_time = time.time() - start_time
         
-        # Step 3: Save to cache
+        # Step 2: Save to cache
         file_path = save_features(
             features, symbol, timeframe, feature_set, params_hash, self.data_dir
         )
         
-        # Step 4: Update metadata
+        # Step 3: Update metadata
         self.metadata.update_feature_cache(
             symbol=symbol,
             timeframe=timeframe,
