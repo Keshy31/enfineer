@@ -61,6 +61,14 @@ from .training import (
     get_temporal_feature_cols,
     get_macro_feature_cols,
 )
+from .walk_forward import (
+    WalkForwardGMM,
+    WalkForwardResult,
+    WalkForwardFoldResult,
+    find_optimal_k,
+    get_stationary_features,
+    validate_stationarity,
+)
 
 __all__ = [
     # High-level interface
@@ -109,4 +117,11 @@ __all__ = [
     "normalize_dataset",
     "get_temporal_feature_cols",
     "get_macro_feature_cols",
+    # Walk-Forward Validation
+    "WalkForwardGMM",
+    "WalkForwardResult",
+    "WalkForwardFoldResult",
+    "find_optimal_k",
+    "get_stationary_features",
+    "validate_stationarity",
 ]
