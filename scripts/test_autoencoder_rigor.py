@@ -6,9 +6,14 @@ as we did for the GMM baseline.
 
 Run from project root:
     python scripts/test_autoencoder_rigor.py
+    python scripts/test_autoencoder_rigor.py --model checkpoints/my_model
 """
 
 import sys
+import json
+import pickle
+import argparse
+import torch
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
@@ -30,12 +35,39 @@ from models.trainer import AutoencoderTrainer, TrainingConfig, create_data_loade
 from analysis.statistical_tests import (
     bootstrap_sharpe_ci,
     compute_regime_transition_matrix,
-    test_regime_significance,
 )
-from backtest.costs import CostModel, COST_PRESETS, analyze_cost_impact
 
+def parse_args():
+    parser = argparse.ArgumentParser(description="Run statistical rigor tests on Autoencoder.")
+    parser.add_argument("--model", type=str, help="Path to trained model checkpoint to validate")
+    return parser.parse_args()
 
-def run_autoencoder_comparison():
+def load_trained_model(model_path):
+    """Load model and components from checkpoint."""
+    path = Path(model_path)
+    
+    # Load metadata
+    with open(path / "metadata.json", "r") as f:
+        metadata = json.load(f)
+        
+    # Load norm stats
+    with open(path / "norm_stats.pkl", "rb") as f:
+        norm_stats = pickle.load(f)
+        
+    # Load GMM
+    with open(path / "gmm.pkl", "rb") as f:
+        gmm = pickle.load(f)
+        
+    # Load Model
+    checkpoint = torch.load(path / "model.pt", map_location="cpu", weights_only=False)
+    config = AutoencoderConfig(**checkpoint["model_config"])
+    model = HedgeFundBrain(config)
+    model.load_state_dict(checkpoint["model_state_dict"])
+    model.eval()
+    
+    return model, config, norm_stats, gmm, metadata
+
+def run_autoencoder_comparison(args):
     """Compare 8D autoencoder to GMM baseline with statistical rigor."""
     
     print("=" * 70)
@@ -54,6 +86,7 @@ def run_autoencoder_comparison():
         "BTC-USD", "1d",
         feature_set="combined",
         start="2020-01-01",
+        force_recompute=True,
     )
     
     # Get feature columns
@@ -69,71 +102,117 @@ def run_autoencoder_comparison():
         macro_cols=macro_cols,
     )
     
-    print(f"  ✓ Loaded {len(dataset)} samples")
+    print(f"  [OK] Loaded {len(dataset)} samples")
+
+    latents_8d = None
+    labels_ae = None
+    test_dates = None
     
     # =========================================
-    # Train 8D Autoencoder (Quick - single train/test split)
+    # Model Strategy: Load or Train
     # =========================================
-    print("\n[2/5] Training 8D autoencoder (quick validation)...")
+    if args.model:
+        print(f"\n[2/5] Loading trained model from {args.model}...")
+        model, config, norm_stats, gmm_ae, metadata = load_trained_model(args.model)
+        
+        # Determine OOS period
+        oos_start = metadata.get("data", {}).get("oos_start")
+        if not oos_start:
+            print("  Warning: No OOS start date in metadata, using default split")
+            start_idx = int(len(dataset) * 0.8)
+        else:
+            # Find index closest to oos_start
+            print(f"  Using OOS start date: {oos_start}")
+            # dataset.dates is a numpy array of datetimes
+            start_idx = np.searchsorted(dataset.dates, np.datetime64(oos_start))
+            
+        # Prepare Test Data
+        X_temp_test = dataset.X_temporal[start_idx:]
+        X_macro_test = dataset.X_macro[start_idx:]
+        test_dates = dataset.dates[start_idx:]
+        
+        # Normalize using saved stats
+        temp_mean = norm_stats['temp_mean']
+        temp_std = norm_stats['temp_std']
+        macro_mean = norm_stats['macro_mean']
+        macro_std = norm_stats['macro_std']
+        
+        X_temp_test_norm = ((X_temp_test - temp_mean) / temp_std).astype(np.float32)
+        X_macro_test_norm = ((X_macro_test - macro_mean) / macro_std).astype(np.float32)
+        
+        # Encode
+        print("  Encoding test data...")
+        test_loader = create_data_loaders(X_temp_test_norm, X_macro_test_norm, batch_size=32, shuffle=False)
+        trainer = AutoencoderTrainer(model, TrainingConfig()) # Config not used for encoding
+        latents_8d = trainer.encode_dataset(test_loader)
+        
+        # Predict Regimes
+        print("  Predicting regimes...")
+        labels_ae = gmm_ae.predict(latents_8d)
+        n_regimes_ae = gmm_ae.n_components
+        
+    else:
+        print("\n[2/5] Training 8D autoencoder (quick validation)...")
+        
+        # Use 80/20 split for quick test
+        train_size = int(len(dataset) * 0.8)
+        
+        X_temp_train = dataset.X_temporal[:train_size]
+        X_macro_train = dataset.X_macro[:train_size]
+        X_temp_test = dataset.X_temporal[train_size:]
+        X_macro_test = dataset.X_macro[train_size:]
+        test_dates = dataset.dates[train_size:]
+        
+        # Normalize
+        temp_mean = X_temp_train.mean(axis=(0, 1))
+        temp_std = np.where(X_temp_train.std(axis=(0, 1)) < 1e-8, 1.0, X_temp_train.std(axis=(0, 1)))
+        macro_mean = X_macro_train.mean(axis=0)
+        macro_std = np.where(X_macro_train.std(axis=0) < 1e-8, 1.0, X_macro_train.std(axis=0))
+        
+        X_temp_train_norm = ((X_temp_train - temp_mean) / temp_std).astype(np.float32)
+        X_temp_test_norm = ((X_temp_test - temp_mean) / temp_std).astype(np.float32)
+        X_macro_train_norm = ((X_macro_train - macro_mean) / macro_std).astype(np.float32)
+        X_macro_test_norm = ((X_macro_test - macro_mean) / macro_std).astype(np.float32)
+        
+        # Model config - 8D latent
+        model_config = AutoencoderConfig(
+            temporal_features=len(temporal_cols),
+            macro_features=len(macro_cols),
+            sequence_length=30,
+            latent_dim=8,
+        )
+        
+        train_config = TrainingConfig(
+            epochs=50,
+            early_stopping_patience=10,
+            learning_rate=1e-3,
+            batch_size=32,
+            lambda_macro=2.0,
+        )
+        
+        # Train
+        model = HedgeFundBrain(model_config)
+        trainer = AutoencoderTrainer(model, train_config)
+        
+        train_loader = create_data_loaders(X_temp_train_norm, X_macro_train_norm, batch_size=32, shuffle=True)
+        val_split = int(len(X_temp_train_norm) * 0.8)
+        val_loader = create_data_loaders(
+            X_temp_train_norm[val_split:], X_macro_train_norm[val_split:],
+            batch_size=32, shuffle=False
+        )
+        
+        trainer.fit(train_loader, val_loader, fold_num=0)
+        
+        # Encode test data
+        test_loader = create_data_loaders(X_temp_test_norm, X_macro_test_norm, batch_size=32, shuffle=False)
+        latents_8d = trainer.encode_dataset(test_loader)
+        
+        # Cluster latent space
+        gmm_ae = GaussianMixture(n_components=5, covariance_type='full', random_state=42, n_init=10)
+        labels_ae = gmm_ae.fit_predict(latents_8d)
+        n_regimes_ae = 5
     
-    # Use 80/20 split for quick test
-    train_size = int(len(dataset) * 0.8)
-    
-    X_temp_train = dataset.X_temporal[:train_size]
-    X_macro_train = dataset.X_macro[:train_size]
-    X_temp_test = dataset.X_temporal[train_size:]
-    X_macro_test = dataset.X_macro[train_size:]
-    test_dates = dataset.dates[train_size:]
-    
-    # Normalize
-    temp_mean = X_temp_train.mean(axis=(0, 1))
-    temp_std = np.where(X_temp_train.std(axis=(0, 1)) < 1e-8, 1.0, X_temp_train.std(axis=(0, 1)))
-    macro_mean = X_macro_train.mean(axis=0)
-    macro_std = np.where(X_macro_train.std(axis=0) < 1e-8, 1.0, X_macro_train.std(axis=0))
-    
-    X_temp_train_norm = ((X_temp_train - temp_mean) / temp_std).astype(np.float32)
-    X_temp_test_norm = ((X_temp_test - temp_mean) / temp_std).astype(np.float32)
-    X_macro_train_norm = ((X_macro_train - macro_mean) / macro_std).astype(np.float32)
-    X_macro_test_norm = ((X_macro_test - macro_mean) / macro_std).astype(np.float32)
-    
-    # Model config - 8D latent
-    model_config = AutoencoderConfig(
-        temporal_features=len(temporal_cols),
-        macro_features=len(macro_cols),
-        sequence_length=30,
-        latent_dim=8,
-    )
-    
-    train_config = TrainingConfig(
-        epochs=50,
-        early_stopping_patience=10,
-        learning_rate=1e-3,
-        batch_size=32,
-        lambda_macro=2.0,
-    )
-    
-    # Train
-    model = HedgeFundBrain(model_config)
-    trainer = AutoencoderTrainer(model, train_config)
-    
-    train_loader = create_data_loaders(X_temp_train_norm, X_macro_train_norm, batch_size=32, shuffle=True)
-    val_split = int(len(X_temp_train_norm) * 0.8)
-    val_loader = create_data_loaders(
-        X_temp_train_norm[val_split:], X_macro_train_norm[val_split:],
-        batch_size=32, shuffle=False
-    )
-    
-    trainer.fit(train_loader, val_loader, fold_num=0)
-    
-    # Encode test data
-    test_loader = create_data_loaders(X_temp_test_norm, X_macro_test_norm, batch_size=32, shuffle=False)
-    latents_8d = trainer.encode_dataset(test_loader)
-    
-    print(f"  ✓ 8D latents shape: {latents_8d.shape}")
-    
-    # Cluster latent space
-    gmm_ae = GaussianMixture(n_components=5, covariance_type='full', random_state=42, n_init=10)
-    labels_ae = gmm_ae.fit_predict(latents_8d)
+    print(f"  [OK] 8D latents shape: {latents_8d.shape}")
     
     # =========================================
     # Compare to GMM Baseline
@@ -157,7 +236,7 @@ def run_autoencoder_comparison():
     gmm_baseline = GaussianMixture(n_components=8, covariance_type='diag', random_state=42, n_init=10)
     labels_gmm = gmm_baseline.fit_predict(X_gmm_pca)
     
-    print(f"  ✓ GMM baseline: {pca.n_components_} PCA dims, {8} clusters")
+    print(f"  [OK] GMM baseline: {pca.n_components_} PCA dims, {8} clusters")
     
     # =========================================
     # Calculate Returns by Regime
@@ -175,7 +254,7 @@ def run_autoencoder_comparison():
     print("  " + "-" * 60)
     
     returns_by_regime_ae = {}
-    for regime in range(5):
+    for regime in range(n_regimes_ae):
         mask = test_df['regime_ae'] == regime
         returns = test_df.loc[mask, 'fwd_return_5d'].dropna().values
         if len(returns) > 10:
@@ -211,7 +290,7 @@ def run_autoencoder_comparison():
     # =========================================
     print("\n[5/5] Comparing regime stability...")
     
-    trans_ae, stats_ae = compute_regime_transition_matrix(labels_ae, n_regimes=5)
+    trans_ae, stats_ae = compute_regime_transition_matrix(labels_ae, n_regimes=n_regimes_ae)
     trans_gmm, stats_gmm = compute_regime_transition_matrix(labels_gmm, n_regimes=8)
     
     print(f"\n  8D Autoencoder:")
@@ -248,7 +327,7 @@ def run_autoencoder_comparison():
     print(f"  | Sharpe Spread        | {ae_spread:14.2f} | {gmm_spread:12.2f} |")
     print(f"  | Regime Persistence   | {stats_ae['avg_persistence']*100:13.1f}% | {stats_gmm['avg_persistence']*100:11.1f}% |")
     print(f"  | Stability            | {stats_ae['stability']*100:13.1f}% | {stats_gmm['stability']*100:11.1f}% |")
-    print(f"  | Number of Regimes    | {5:14d} | {8:12d} |")
+    print(f"  | Number of Regimes    | {n_regimes_ae:14d} | {8:12d} |")
     
     # Verdict
     print("\n" + "-" * 70)
@@ -304,8 +383,8 @@ def run_autoencoder_comparison():
     ax3 = axes[1, 0]
     pca_viz = PCA(n_components=2)
     latents_2d = pca_viz.fit_transform(latents_8d)
-    colors_regime = plt.cm.Set2(np.linspace(0, 1, 5))
-    for regime in range(5):
+    colors_regime = plt.cm.Set2(np.linspace(0, 1, n_regimes_ae))
+    for regime in range(n_regimes_ae):
         mask = labels_ae == regime
         ax3.scatter(latents_2d[mask, 0], latents_2d[mask, 1], 
                    c=[colors_regime[regime]], alpha=0.5, s=20, label=f'R{regime}')
@@ -325,7 +404,7 @@ def run_autoencoder_comparison():
          'GMM' if stats_gmm['avg_persistence'] > stats_ae['avg_persistence'] else 'AE'],
         ['Stability', f'{stats_ae["stability"]*100:.1f}%', f'{stats_gmm["stability"]*100:.1f}%',
          'GMM' if stats_gmm['stability'] > stats_ae['stability'] else 'AE'],
-        ['# Regimes', '5', '8', '-'],
+        ['# Regimes', str(n_regimes_ae), '8', '-'],
     ]
     
     table = ax4.table(
@@ -343,7 +422,7 @@ def run_autoencoder_comparison():
     plt.savefig(output_dir / "autoencoder_8d_comparison.png", dpi=150, bbox_inches='tight')
     plt.close()
     
-    print(f"  ✓ Saved to output/autoencoder_8d_comparison.png")
+    print(f"  [OK] Saved to output/autoencoder_8d_comparison.png")
     
     return {
         'ae_spread': ae_spread,
@@ -354,5 +433,5 @@ def run_autoencoder_comparison():
 
 
 if __name__ == "__main__":
-    results = run_autoencoder_comparison()
-
+    args = parse_args()
+    results = run_autoencoder_comparison(args)
