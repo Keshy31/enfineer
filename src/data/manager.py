@@ -153,7 +153,7 @@ class DataManager:
             )
         
         # Need to fetch missing data
-        print(f"⟳ Fetching missing data for {symbol}/{timeframe}...")
+        print(f"[FETCH] Fetching missing data for {symbol}/{timeframe}...")
         
         for gap_start, gap_end in missing_ranges:
             print(f"  Fetching: {gap_start} to {gap_end}")
@@ -172,7 +172,7 @@ class DataManager:
                 file_path = append_ohlcv(new_data, symbol, timeframe, self.data_dir)
                 print(f"  ✓ Fetched {len(new_data)} rows in {fetch_time:.2f}s")
             else:
-                print(f"  ⚠ No data returned for {gap_start} to {gap_end}")
+                print(f"  [WARN] No data returned for {gap_start} to {gap_end}")
         
         # Update metadata with full coverage
         if parquet_exists(symbol, timeframe, self.data_dir):
@@ -340,7 +340,7 @@ class DataManager:
         if macro_symbols is None:
             macro_symbols = DEFAULT_MACRO_SYMBOLS.copy()
         
-        print(f"⟳ Fetching aligned data: {primary_symbol} + {macro_symbols}")
+        print(f"[FETCH] Fetching aligned data: {primary_symbol} + {macro_symbols}")
         
         # Fetch primary (crypto) data
         crypto_df = self.get_ohlcv(primary_symbol, timeframe, start=start, end=end)
@@ -351,10 +351,10 @@ class DataManager:
             try:
                 macro_dfs[symbol] = self.get_ohlcv(symbol, timeframe, start=start, end=end)
             except Exception as e:
-                print(f"  ⚠ Could not fetch {symbol}: {e}")
+                print(f"  [WARN] Could not fetch {symbol}: {e}")
         
         if not macro_dfs:
-            print("  ⚠ No macro data available, returning crypto only")
+            print("  [WARN] No macro data available, returning crypto only")
             return crypto_df
         
         # Optionally trim to common date range
@@ -478,7 +478,7 @@ class DataManager:
                     )
         
         # Cache MISS - need to compute
-        print(f"⟳ Computing {feature_set} features for {symbol}/{timeframe}...")
+        print(f"[COMPUTE] Computing {feature_set} features for {symbol}/{timeframe}...")
         print(f"  Params: window={window}, sigma_floor={sigma_floor}")
         
         start_time = time.time()

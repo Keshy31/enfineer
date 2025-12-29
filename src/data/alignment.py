@@ -70,7 +70,7 @@ def align_to_crypto(
     
     for symbol, macro_df in macro_dfs.items():
         if macro_df is None or len(macro_df) == 0:
-            print(f"  ⚠ Skipping {symbol}: No data")
+            print(f"  [WARN] Skipping {symbol}: No data")
             continue
             
         # Get clean prefix for column names
@@ -98,7 +98,7 @@ def align_to_crypto(
         aligned_count = aligned_macro.notna().any(axis=1).sum()
         filled_count = aligned_count - len(macro_df.reindex(result.index).dropna())
         
-        print(f"  ✓ {symbol} -> {prefix}_*: {aligned_count} aligned rows ({filled_count} filled)")
+        print(f"  [OK] {symbol} -> {prefix}_*: {aligned_count} aligned rows ({filled_count} filled)")
     
     return result
 
