@@ -66,6 +66,10 @@ def align_to_crypto(
         "^TNX": "TNX",
         "DX-Y.NYB": "DXY",
         "GLD": "GLD",
+        "^VIX": "VIX",
+        "^IXIC": "NASDAQ",
+        "^IRX": "IRX",
+        "CL=F": "OIL",
     }
     
     for symbol, macro_df in macro_dfs.items():

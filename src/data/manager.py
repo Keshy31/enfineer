@@ -51,7 +51,15 @@ from .dalio_features import compute_dalio_features, compute_combined_features
 
 
 # Default macro symbols for alignment
-DEFAULT_MACRO_SYMBOLS = ["^TNX", "DX-Y.NYB", "GLD"]
+DEFAULT_MACRO_SYMBOLS = [
+    "^TNX",       # 10-Year Treasury Yield
+    "DX-Y.NYB",   # US Dollar Index
+    "GLD",        # Gold
+    "^VIX",       # CBOE Volatility Index (Fear Gauge)
+    "^IXIC",      # Nasdaq Composite (Tech/Equity Beta)
+    "^IRX",       # 13-Week Treasury Bill (for Yield Curve)
+    "CL=F",       # Crude Oil Futures (Inflation)
+]
 
 
 class DataManager:
@@ -145,7 +153,7 @@ class DataManager:
         
         if not missing_ranges:
             # Everything cached - fast path
-            print(f"✓ Loading {symbol}/{timeframe} from cache")
+            print(f"[OK] Loading {symbol}/{timeframe} from cache")
             return load_ohlcv(
                 symbol, timeframe, self.data_dir,
                 start=start_date.isoformat(),
@@ -170,7 +178,7 @@ class DataManager:
             if new_data is not None and len(new_data) > 0:
                 # Append to Parquet (handles merge with existing)
                 file_path = append_ohlcv(new_data, symbol, timeframe, self.data_dir)
-                print(f"  ✓ Fetched {len(new_data)} rows in {fetch_time:.2f}s")
+                print(f"  [OK] Fetched {len(new_data)} rows in {fetch_time:.2f}s")
             else:
                 print(f"  [WARN] No data returned for {gap_start} to {gap_end}")
         
@@ -270,7 +278,7 @@ class DataManager:
             if path.exists():
                 path.unlink()
             self.metadata.delete_coverage(symbol, timeframe)
-            print(f"✓ Cleared cache for {symbol}/{timeframe}")
+            print(f"[OK] Cleared cache for {symbol}/{timeframe}")
         elif symbol:
             # Clear all timeframes for symbol
             for coverage in self.metadata.list_coverage(symbol):
@@ -278,7 +286,7 @@ class DataManager:
                 if path.exists():
                     path.unlink()
                 self.metadata.delete_coverage(symbol, coverage.timeframe)
-            print(f"✓ Cleared all cache for {symbol}")
+            print(f"[OK] Cleared all cache for {symbol}")
         else:
             # Clear everything
             market_dir = self.data_dir / "market"
@@ -287,7 +295,7 @@ class DataManager:
                 shutil.rmtree(market_dir)
             # Re-initialize metadata
             self.metadata = MetadataDB(self.data_dir / "metadata.db")
-            print("✓ Cleared all cached data")
+            print("[OK] Cleared all cached data")
 
     # =========================================
     # Alignment Methods (Crypto + Macro)
@@ -370,7 +378,7 @@ class DataManager:
         print("  Aligning macro data to crypto dates...")
         aligned = align_to_crypto(crypto_df, macro_dfs)
         
-        print(f"  ✓ Aligned data: {len(aligned)} rows, {len(aligned.columns)} columns")
+        print(f"  [OK] Aligned data: {len(aligned)} rows, {len(aligned.columns)} columns")
         
         return aligned
     
@@ -472,7 +480,7 @@ class DataManager:
                     symbol, timeframe, feature_set, params_hash, self.data_dir
                 )
                 if feature_path.exists():
-                    print(f"✓ Loading {feature_set} features from cache (hash: {params_hash})")
+                    print(f"[OK] Loading {feature_set} features from cache (hash: {params_hash})")
                     return load_features(
                         symbol, timeframe, feature_set, params_hash, self.data_dir
                     )
@@ -541,8 +549,8 @@ class DataManager:
             file_path=str(file_path),
         )
         
-        print(f"  ✓ Computed {len(features)} rows in {compute_time:.2f}s")
-        print(f"  ✓ Cached with hash: {params_hash}")
+        print(f"  [OK] Computed {len(features)} rows in {compute_time:.2f}s")
+        print(f"  [OK] Cached with hash: {params_hash}")
         
         return features
     
@@ -593,14 +601,14 @@ class DataManager:
             
             # Delete metadata
             deleted = self.metadata.delete_feature_cache(symbol, feature_set=feature_set)
-            print(f"✓ Cleared {deleted} cached feature record(s)")
+            print(f"[OK] Cleared {deleted} cached feature record(s)")
         else:
             # Clear all feature cache
             features_dir = self.data_dir / "features"
             if features_dir.exists():
                 import shutil
                 shutil.rmtree(features_dir)
-            print("✓ Cleared all cached features")
+            print("[OK] Cleared all cached features")
 
 
 if __name__ == "__main__":

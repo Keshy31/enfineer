@@ -124,6 +124,52 @@ def compute_dalio_features(
         features["gold_momentum_20d"] = features["gold_return"].rolling(
             window=20, min_periods=1
         ).sum()
+
+    # =========================================
+    # VOLATILITY (VIX - Fear Gauge)
+    # =========================================
+    if "VIX_Close" in features.columns:
+        features["vix_level"] = features["VIX_Close"]
+        
+        # VIX Regime: 0=Calm(<20), 1=Fear(20-30), 2=Panic(>30)
+        features["vix_regime"] = 0
+        features["vix_regime"] = np.where(features["VIX_Close"] >= 20, 1, features["vix_regime"])
+        features["vix_regime"] = np.where(features["VIX_Close"] >= 30, 2, features["vix_regime"])
+
+    # =========================================
+    # YIELD CURVE (Recession Signal)
+    # =========================================
+    if "TNX_Close" in features.columns and "IRX_Close" in features.columns:
+        # 10Y - 3M Spread (Classic recession indicator)
+        features["yield_spread"] = features["TNX_Close"] - features["IRX_Close"]
+        
+        # Inversion Flag (1 = Inverted/Recession Warning)
+        features["curve_inversion"] = (features["yield_spread"] < 0).astype(int)
+
+    # =========================================
+    # EQUITY BETA (Nasdaq - Tech Correlation)
+    # =========================================
+    if "NASDAQ_Close" in features.columns and "Close" in features.columns:
+        nasdaq_ret = np.log(features["NASDAQ_Close"] / features["NASDAQ_Close"].shift(1))
+        btc_ret = np.log(features["Close"] / features["Close"].shift(1))
+        
+        # Rolling Correlation
+        features["equity_corr"] = btc_ret.rolling(window=window, min_periods=window//2).corr(nasdaq_ret)
+        
+        # Rolling Beta = Cov(BTC, NQ) / Var(NQ)
+        cov = btc_ret.rolling(window=window, min_periods=window//2).cov(nasdaq_ret)
+        var = nasdaq_ret.rolling(window=window, min_periods=window//2).var()
+        features["equity_beta"] = cov / var
+
+    # =========================================
+    # COMMODITIES (Oil - Inflation Proxy)
+    # =========================================
+    if "OIL_Close" in features.columns:
+        features["oil_return"] = np.log(features["OIL_Close"] / features["OIL_Close"].shift(1))
+        
+        if "Close" in features.columns:
+            btc_ret = np.log(features["Close"] / features["Close"].shift(1))
+            features["oil_corr"] = btc_ret.rolling(window=window, min_periods=window//2).corr(features["oil_return"])
     
     # =========================================
     # CROSS-ASSET CORRELATIONS
@@ -168,6 +214,15 @@ def compute_dalio_features(
     if "gold_zscore" in features.columns:
         # Weak gold = risk-on (less safe-haven demand)
         risk_signals.append(-features["gold_zscore"])
+    
+    if "vix_level" in features.columns:
+        # Low VIX = Risk-On. Normalize VIX (20 is pivot).
+        # (20 - VIX) / 10 -> >0 if VIX<20, <0 if VIX>20
+        risk_signals.append((20 - features["vix_level"]) / 10)
+        
+    if "curve_inversion" in features.columns:
+        # Inversion = Risk-Off (-1 penalty)
+        risk_signals.append(-features["curve_inversion"])
     
     if risk_signals:
         # Average of normalized signals
@@ -230,6 +285,18 @@ def get_dalio_feature_columns() -> list[str]:
         "gold_zscore",
         "gold_momentum_5d",
         "gold_momentum_20d",
+        # Volatility features
+        "vix_level",
+        "vix_regime",
+        # Yield Curve features
+        "yield_spread",
+        "curve_inversion",
+        # Equity features
+        "equity_beta",
+        "equity_corr",
+        # Commodity features
+        "oil_return",
+        "oil_corr",
         # Cross-asset correlations
         "btc_gold_corr",
         "btc_dxy_corr",
