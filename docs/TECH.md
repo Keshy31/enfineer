@@ -276,7 +276,8 @@ data/
 |--------|-----------|------|
 | BTC-USD | 1d | `data/market/BTC-USD/1d.parquet` |
 | ^TNX | 1d | `data/market/^TNX/1d.parquet` |
-| DX-Y.NYB | 1h | `data/market/DX-Y.NYB/1h.parquet` |
+| ^VIX | 1d | `data/market/^VIX/1d.parquet` |
+| CL=F | 1d | `data/market/CL=F/1d.parquet` |
 
 ### Feature Cache Examples
 

@@ -116,38 +116,7 @@ The 3D constraint is too aggressive:
 
 ---
 
-## Key Learnings Summary
-
-### 1. Look-Ahead Bias is Silent and Deadly
-In-sample results looked reasonable (1.36 Sharpe spread). Walk-forward revealed the REAL signal was even stronger (3.50) once we fixed the stationarity issue. Without walk-forward testing, we would have deployed a flawed model.
-
-### 2. Garbage In, Garbage Out (Feature Engineering)
-Including `yield_10y` (raw level) caused GMM to cluster time periods instead of regimes. One bad feature can ruin everything.
-
-### 3. Complexity ≠ Performance (But Latent Dimension Matters!)
-The simple GMM + PCA baseline (3.50 Sharpe spread) outperforms the 3D neural network (0.79). BUT increasing to 8D latent brings autoencoder to 4.25 with BETTER STABILITY than GMM.
-
-**Updated conclusion:** The autoencoder adds value through stability, not raw Sharpe. For practical trading, stable regimes = fewer trades = lower costs.
-
-### 4. The Visualization Tax
-3D visualization is beautiful but costs ~75% of predictive power. 8D latent with PCA→2D visualization is the sweet spot:
-- Retains signal (4.25 Sharpe spread)
-- Can still visualize (PCA projection)
-- Better stability than GMM
-
-### 5. Stability Matters More Than Raw Sharpe (NEW)
-8D autoencoder has:
-- Lower Sharpe spread (4.25 vs 6.39)
-- But higher stability (70.3% vs 67.7%)
-- And better persistence (71.9% vs 71.1%)
-
-For a trading system, fewer regime flips = fewer transactions = lower costs. The 8D autoencoder may outperform GMM in net (after-cost) returns despite lower gross Sharpe.
-
----
-
-## Future Experiments
-
-### Experiment 5: 8D Autoencoder
+## Experiment 5: 8D Autoencoder
 
 **Date:** December 12, 2025  
 **Status:** ✅ COMPLETED - SUCCESS
@@ -184,7 +153,7 @@ For a trading system, fewer regime flips = fewer transactions = lower costs. The
 
 ---
 
-### Experiment 6: Statistical Significance Audit
+## Experiment 6: Statistical Significance Audit
 
 **Date:** Pending  
 **Status:** Infrastructure ready  
@@ -192,21 +161,9 @@ For a trading system, fewer regime flips = fewer transactions = lower costs. The
 
 **Hypothesis:** Bootstrap CI will reveal true confidence in regime performance.
 
-**Planned Method:**
-```python
-from src.analysis import bootstrap_sharpe_ci, validate_alpha
-result = bootstrap_sharpe_ci(regime_returns)
-# Require: CI lower bound > 0
-```
-
-**Success Criteria:**
-- Best regime: 95% CI lower bound > 0
-- Worst regime: 95% CI upper bound < 0
-- Spread significant after Bonferroni correction
-
 ---
 
-### Experiment 7: Transaction Cost Survival
+## Experiment 7: Transaction Cost Survival
 
 **Date:** Pending  
 **Status:** Infrastructure ready  
@@ -214,21 +171,9 @@ result = bootstrap_sharpe_ci(regime_returns)
 
 **Hypothesis:** Strategy survives realistic trading friction.
 
-**Planned Method:**
-```python
-from src.backtest import CostModel, analyze_cost_impact
-costs = CostModel(spread_bps=5, slippage_bps=2, commission_bps=3)
-result = analyze_cost_impact(returns, positions, costs)
-# Require: net_sharpe > 0.5
-```
-
-**Success Criteria:**
-- Net Sharpe (after 20 bps round-trip) > 0.5
-- Alpha survives costs: True
-
 ---
 
-### Experiment 8: Factor Attribution
+## Experiment 8: Factor Attribution
 
 **Date:** Pending  
 **Status:** Infrastructure ready  
@@ -236,28 +181,43 @@ result = analyze_cost_impact(returns, positions, costs)
 
 **Hypothesis:** Strategy alpha is orthogonal to known factors.
 
-**Planned Method:**
-```python
-from src.analysis import factor_attribution
-factors = pd.DataFrame({
-    'market': btc_returns,
-    'momentum': momentum_20d,
-})
-result = factor_attribution(strategy_returns, factors)
-# Require: residual alpha significant
-```
+---
 
-**Success Criteria:**
-- Residual alpha t-stat > 2.0
-- R-squared < 0.5 (not just factor exposure)
+## Experiment 9: Feature Engineering Upgrade
+
+**Date:** December 31, 2025  
+**Status:** ✅ COMPLETED - IMPLEMENTED
+
+**Hypothesis:** Adding "World Class" macro features (VIX, Oil, Yield Curve, Equity Beta) will provide the neural network with critical context for regime detection that was previously missing.
+
+**Method:**
+- Added 4 new data sources via yfinance:
+  - `^VIX`: CBOE Volatility Index (Fear)
+  - `^IXIC`: Nasdaq Composite (Tech correlation)
+  - `^IRX`: 13-Week Treasury Bill (for Yield Curve spread)
+  - `CL=F`: Crude Oil Futures (Inflation/Growth)
+- Implemented robust "Dalio" feature engineering:
+  - `vix_regime`: Discrete fear states (<20, 20-30, >30)
+  - `yield_spread`: 10Y - 3M spread (Recession signal)
+  - `curve_inversion`: Binary flag for inverted curve
+  - `equity_beta`: Rolling beta to Nasdaq
+  - `oil_corr`: Rolling correlation to energy
+- Validated via `scripts/verify_upgrade.py`
+
+**Results:**
+- Data ingestion successful for all new symbols.
+- Feature computation verified (0 NaNs).
+- Sanity checks passed (e.g., Yield Curve correctly identified inversion in 2024).
+
+**Impact:**
+The model now has access to the same macro-quant signals used by major hedge funds. This should significantly improve the "Macro Branch" of the autoencoder, allowing it to distinguish between "Risk-On" (low VIX, steep curve) and "Risk-Off" (high VIX, inverted curve) regimes with greater precision.
 
 ---
 
-### Future Experiments (Lower Priority)
+## Future Experiments (Lower Priority)
 
 1. **Regime Stability**: Compare flicker between GMM (54.6%) and autoencoder
 2. **Ensemble**: Combine GMM + Autoencoder + HMM predictions
 3. **Alternative Assets**: Test on ETH-USD, S&P 500
 4. **Higher Frequency**: Test on hourly data
 5. **On-chain Features**: Add exchange flows, whale movements
-

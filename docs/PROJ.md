@@ -57,7 +57,12 @@ $$Z_{adjusted} = \frac{x - \mu}{\max(\sigma, \sigma_{floor})}$$
 
 The model consumes a hybrid feature vector:
 1.  **Simons Features (Time-Series):** 30-day window of OHLCV data, converted to log-returns and rolling Z-scores.
-2.  **Dalio Features (Static Context):** Snapshot of macro drivers, including US 10Y Yields (`^TNX`), Dollar Index (`DX-Y.NYB`), and Gold Correlations.
+2.  **Dalio Features (Static Context):** Snapshot of macro drivers, including:
+    *   **Rates:** US 10Y Yields (`^TNX`) and Yield Curve (10Y-3M).
+    *   **Currency:** Dollar Index (`DX-Y.NYB`).
+    *   **Risk/Fear:** VIX (`^VIX`) and Gold (`GLD`).
+    *   **Growth/Inflation:** Crude Oil (`CL=F`).
+    *   **Equity Beta:** Correlation with Nasdaq (`^IXIC`).
 
 ---
 
@@ -245,6 +250,7 @@ Alpha must survive realistic trading friction:
 ### Phase 3: Feature Expansion
 | Task | Status | Impact |
 |------|--------|--------|
+| VIX, Oil, Yield Curve, Nasdaq | ✅ Completed | World-class macro signals |
 | On-chain metrics | Pending | Crypto-native signals |
 | Sentiment data | Pending | Contrarian signals |
 | Microstructure features | Pending | Order flow |

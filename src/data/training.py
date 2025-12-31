@@ -115,6 +115,18 @@ def get_macro_feature_cols() -> list[str]:
         "gold_zscore",
         "gold_momentum_5d",
         "gold_momentum_20d",
+        # Volatility features
+        "vix_level",
+        "vix_regime",
+        # Yield Curve features
+        "yield_spread",
+        "curve_inversion",
+        # Equity features
+        "equity_beta",
+        "equity_corr",
+        # Commodity features
+        "oil_return",
+        "oil_corr",
         # Cross-asset correlations
         "btc_gold_corr",
         "btc_dxy_corr",
