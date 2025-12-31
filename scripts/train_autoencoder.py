@@ -529,8 +529,8 @@ def run_walk_forward_training(run_name: Optional[str] = None):
     print()
     
     # Model config
-    # v1.2: Changed latent_dim from 3 to 8 (see PROJ.md Section 4.3)
-    # 3D was too constrained (0.79 Sharpe spread vs GMM baseline 3.50)
+    # v1.3: Changed latent_dim from 8 to 12 (see EXPERIMENTS.md - Experiment 5)
+    # 12D is the "Goldilocks" zone (0.93 val loss vs 1.30 for 8D)
     model_config = AutoencoderConfig(
         temporal_features=len(temporal_cols),
         macro_features=len(macro_cols),
@@ -538,7 +538,7 @@ def run_walk_forward_training(run_name: Optional[str] = None):
         lstm_hidden=64,
         lstm_layers=2,
         macro_hidden=32,
-        latent_dim=8,  # 8D recommended for regime detection
+        latent_dim=12,  # 12D optimal
         dropout=0.2,
     )
     

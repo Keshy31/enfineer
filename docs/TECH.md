@@ -1,8 +1,8 @@
 # Technical Architecture: Data Layer
 
-**Version 1.1**
+**Version 1.2**
 
-**Date: December 12, 2025**
+**Date: December 31, 2025**
 
 ---
 
@@ -453,7 +453,7 @@ result = duckdb.query("""
     SELECT symbol, date, close
     FROM 'data/market/*/1d.parquet'
     WHERE date >= '2024-01-01'
-      AND close > LAG(close) OVER (PARTITION BY symbol ORDER BY date)
+    AND close > LAG(close) OVER (PARTITION BY symbol ORDER BY date)
 """).df()
 ```
 
@@ -587,14 +587,14 @@ results = wf.fit_predict(features, get_stationary_features())
 | Strategy Return | +506% |
 | Buy & Hold Return | +253% |
 
-### LSTM-Autoencoder (3D Latent)
+### LSTM-Autoencoder (12D Latent)
 
 | Metric | Value |
 |--------|-------|
-| Latent Dimensions | 3 |
-| Sharpe Spread | 0.79 |
-| Clusters Detected | 3 |
-| Training Time (GPU) | ~4 minutes |
+| Latent Dimensions | 12 |
+| Samples per Param | ~7.3x |
+| Improvement vs 8D | -30% MSE |
+| Recommendation | **12D** |
 
-**Conclusion**: 3D latent space loses too much signal. Recommend 8D.
+**Conclusion**: 12D latent space provides the optimal trade-off between reconstruction accuracy and clustering stability.
 

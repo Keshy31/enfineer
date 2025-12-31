@@ -41,9 +41,9 @@ class AutoencoderConfig:
     macro_hidden: int = 32           # Macro encoder hidden
     
     # Latent space
-    # v1.2: Changed from 3 to 8 (see PROJ.md Section 4.3)
-    # 3D was too constrained (Sharpe spread 0.79 vs GMM baseline 3.50)
-    latent_dim: int = 8              # 8D recommended for regime detection
+    # v1.3: Changed from 8 to 12 (see EXPERIMENTS.md - Experiment 5)
+    # 12D offers 30% lower validation loss while maintaining ~7.3x samples/param ratio
+    latent_dim: int = 12             # 12D recommended for regime detection
     
     # Decoder dimensions
     decoder_hidden: int = 64         # Decoder hidden size
@@ -65,7 +65,8 @@ class AutoencoderConfig:
 # Preset configurations for different experiments
 CONFIG_PRESETS = {
     "3d_visualization": AutoencoderConfig(latent_dim=3),  # Original, for viz only
-    "8d_recommended": AutoencoderConfig(latent_dim=8),    # Recommended default
+    "8d_baseline": AutoencoderConfig(latent_dim=8),       # Stable baseline
+    "12d_optimal": AutoencoderConfig(latent_dim=12),      # Recommended (Sweet Spot)
     "16d_high_capacity": AutoencoderConfig(latent_dim=16, lstm_hidden=128),
 }
 
