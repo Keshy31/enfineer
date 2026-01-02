@@ -237,7 +237,7 @@ class WalkForwardGMM:
             folds.append(fold)
             
             pca_dims = pca.n_components_ if pca else X_train_scaled.shape[1]
-            print(f"  Fold {fold_num}: Train {len(X_train)} → Test {len(X_test)} "
+            print(f"  Fold {fold_num}: Train {len(X_train)} -> Test {len(X_test)} "
                   f"({test_dates[0].date()} to {test_dates[-1].date()}) "
                   f"[{pca_dims} dims]")
             
@@ -311,7 +311,7 @@ def find_optimal_k(
     if use_pca:
         pca = PCA(n_components=pca_variance)
         X_reduced = pca.fit_transform(X_scaled)
-        print(f"PCA: {X.shape[1]} → {X_reduced.shape[1]} dimensions ({pca_variance*100:.0f}% variance)")
+        print(f"PCA: {X.shape[1]} -> {X_reduced.shape[1]} dimensions ({pca_variance*100:.0f}% variance)")
     else:
         X_reduced = X_scaled
     

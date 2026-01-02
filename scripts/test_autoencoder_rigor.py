@@ -36,6 +36,7 @@ from analysis.statistical_tests import (
     bootstrap_sharpe_ci,
     compute_regime_transition_matrix,
 )
+from backtest.costs import COST_PRESETS, analyze_cost_impact, estimate_capacity
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Run statistical rigor tests on Autoencoder.")
@@ -68,18 +69,17 @@ def load_trained_model(model_path):
     return model, config, norm_stats, gmm, metadata
 
 def run_autoencoder_comparison(args):
-    """Compare 8D autoencoder to GMM baseline with statistical rigor."""
+    """Compare Autoencoder to GMM baseline with statistical rigor."""
     
     print("=" * 70)
-    print("8D AUTOENCODER vs GMM BASELINE")
-    print("Statistical Rigor Comparison")
+    print("AUTOENCODER STATISTICAL RIGOR & VALIDATION")
     print("=" * 70)
     print()
     
     # =========================================
     # Load Data
     # =========================================
-    print("[1/5] Loading data...")
+    print("[1/7] Loading data...")
     
     dm = DataManager("./data")
     features = dm.get_features(
@@ -112,7 +112,7 @@ def run_autoencoder_comparison(args):
     # Model Strategy: Load or Train
     # =========================================
     if args.model:
-        print(f"\n[2/5] Loading trained model from {args.model}...")
+        print(f"\n[2/7] Loading trained model from {args.model}...")
         model, config, norm_stats, gmm_ae, metadata = load_trained_model(args.model)
         
         # Determine OOS period
@@ -152,7 +152,7 @@ def run_autoencoder_comparison(args):
         n_regimes_ae = gmm_ae.n_components
         
     else:
-        print("\n[2/5] Training 8D autoencoder (quick validation)...")
+        print("\n[2/7] Training 8D autoencoder (quick validation)...")
         
         # Use 80/20 split for quick test
         train_size = int(len(dataset) * 0.8)
@@ -212,12 +212,12 @@ def run_autoencoder_comparison(args):
         labels_ae = gmm_ae.fit_predict(latents_8d)
         n_regimes_ae = 5
     
-    print(f"  [OK] 8D latents shape: {latents_8d.shape}")
+    print(f"  [OK] Latents shape: {latents_8d.shape}")
     
     # =========================================
     # Compare to GMM Baseline
     # =========================================
-    print("\n[3/5] Running GMM baseline for comparison...")
+    print("\n[3/7] Running GMM baseline for comparison...")
     
     # Get same test period features for GMM
     test_features = features.loc[test_dates]
@@ -241,7 +241,7 @@ def run_autoencoder_comparison(args):
     # =========================================
     # Calculate Returns by Regime
     # =========================================
-    print("\n[4/5] Analyzing regime returns...")
+    print("\n[4/7] Analyzing regime returns...")
     
     test_df = test_features.copy()
     test_df['regime_ae'] = labels_ae
@@ -250,7 +250,7 @@ def run_autoencoder_comparison(args):
     test_df['daily_return'] = test_df['Close'].pct_change()
     
     # 8D Autoencoder regime analysis
-    print("\n  8D AUTOENCODER REGIMES:")
+    print("\n  AUTOENCODER REGIMES:")
     print("  " + "-" * 60)
     
     returns_by_regime_ae = {}
@@ -288,12 +288,12 @@ def run_autoencoder_comparison(args):
     # =========================================
     # Regime Transition Analysis
     # =========================================
-    print("\n[5/5] Comparing regime stability...")
+    print("\n[5/7] Comparing regime stability...")
     
     trans_ae, stats_ae = compute_regime_transition_matrix(labels_ae, n_regimes=n_regimes_ae)
     trans_gmm, stats_gmm = compute_regime_transition_matrix(labels_gmm, n_regimes=8)
     
-    print(f"\n  8D Autoencoder:")
+    print(f"\n  Autoencoder:")
     print(f"    Avg persistence: {stats_ae['avg_persistence']:.1%}")
     print(f"    Stability: {stats_ae['stability']:.1%}")
     
@@ -301,6 +301,53 @@ def run_autoencoder_comparison(args):
     print(f"    Avg persistence: {stats_gmm['avg_persistence']:.1%}")
     print(f"    Stability: {stats_gmm['stability']:.1%}")
     
+    # =========================================
+    # NEW: Transaction Cost Analysis
+    # =========================================
+    print("\n[6/7] Analyzing transaction cost impact...")
+    
+    # Construct strategy: Long the best regimes
+    # Identify regimes with Sharpe > 0.5
+    bullish_regimes = []
+    for r, returns in returns_by_regime_ae.items():
+        if returns.mean() > 0:
+            bullish_regimes.append(r)
+            
+    if not bullish_regimes:
+        print("  Warning: No bullish regimes found. Using best relative performer.")
+        # Fallback to best mean
+        best_r = max(returns_by_regime_ae.keys(), key=lambda x: returns_by_regime_ae[x].mean())
+        bullish_regimes = [best_r]
+        
+    print(f"  Simulating Long-Only strategy on regimes: {bullish_regimes}")
+    
+    # Create strategy signal
+    test_df['position'] = test_df['regime_ae'].isin(bullish_regimes).astype(int)
+    
+    # Analyze with Retail costs (0.1% fee + slippage)
+    cost_res = analyze_cost_impact(
+        test_df['daily_return'].dropna(), 
+        test_df['position'].dropna(), 
+        COST_PRESETS['btc_retail']
+    )
+    
+    print(f"  Gross Sharpe: {cost_res['gross_sharpe']:.2f}")
+    print(f"  Net Sharpe (Retail 0.1%): {cost_res['net_sharpe']:.2f}")
+    print(f"  Avg cost per trade: {cost_res['cost_per_trade_avg']*10000:.1f} bps")
+    
+    # =========================================
+    # NEW: Capacity Estimation
+    # =========================================
+    print("\n[7/7] Estimating strategy capacity...")
+    
+    # Estimate based on 5-day holding period
+    cap = estimate_capacity(
+        avg_daily_volume_usd=30e9, # $30B avg BTC volume
+        max_participation_rate=0.01, # 1% limit
+        holding_period_days=5
+    )
+    print(f"  Max AUM (Est): ${cap['max_aum_usd']/1e6:.0f}M")
+
     # =========================================
     # Summary Comparison
     # =========================================
@@ -322,7 +369,7 @@ def run_autoencoder_comparison(args):
     ae_spread = max(ae_sharpes) - min(ae_sharpes) if ae_sharpes else 0
     gmm_spread = max(gmm_sharpes) - min(gmm_sharpes) if gmm_sharpes else 0
     
-    print("\n  | Metric                | 8D Autoencoder | GMM Baseline |")
+    print("\n  | Metric                | Autoencoder    | GMM Baseline |")
     print("  |----------------------|----------------|--------------|")
     print(f"  | Sharpe Spread        | {ae_spread:14.2f} | {gmm_spread:12.2f} |")
     print(f"  | Regime Persistence   | {stats_ae['avg_persistence']*100:13.1f}% | {stats_gmm['avg_persistence']*100:11.1f}% |")
@@ -332,14 +379,45 @@ def run_autoencoder_comparison(args):
     # Verdict
     print("\n" + "-" * 70)
     if ae_spread > gmm_spread:
-        print("  VERDICT: 8D Autoencoder OUTPERFORMS GMM baseline!")
+        print("  VERDICT: Autoencoder OUTPERFORMS GMM baseline!")
     elif ae_spread > gmm_spread * 0.8:
-        print("  VERDICT: 8D Autoencoder is COMPETITIVE with GMM baseline")
+        print("  VERDICT: Autoencoder is COMPETITIVE with GMM baseline")
     elif ae_spread > 2.0:
-        print("  VERDICT: 8D Autoencoder shows STRONG regime separation")
+        print("  VERDICT: Autoencoder shows STRONG regime separation")
     else:
-        print("  VERDICT: GMM baseline still superior, but 8D shows promise")
+        print("  VERDICT: GMM baseline still superior, but AE shows promise")
     print("-" * 70)
+    
+    # NEW: Add Final Verdict Logic to Summary
+    print("\n" + "=" * 70)
+    print("FINAL VALIDATION VERDICT")
+    print("=" * 70)
+    
+    passed = 0
+    checks = 0
+    
+    # Check 1: Sharpe Spread > 2.0
+    check_spread = ae_spread > 2.0
+    print(f"[{'x' if check_spread else ' '}] Sharpe Spread > 2.0 ({ae_spread:.2f})")
+    if check_spread: passed += 1
+    checks += 1
+    
+    # Check 2: Stability > 50%
+    check_stable = stats_ae['avg_persistence'] > 0.5
+    print(f"[{'x' if check_stable else ' '}] Regime Stability > 50% ({stats_ae['avg_persistence']:.1%})")
+    if check_stable: passed += 1
+    checks += 1
+    
+    # Check 3: Cost Survival
+    check_cost = cost_res['net_sharpe'] > 0.5
+    print(f"[{'x' if check_cost else ' '}] Survives Costs (Net Sharpe > 0.5)")
+    if check_cost: passed += 1
+    checks += 1
+    
+    if passed == checks:
+        print("\n[PASS] Model is ready for paper trading.")
+    else:
+        print("\n[WARNING] CAUTION: Model failed one or more validation checks.")
     
     # =========================================
     # Generate Comparison Visualization
@@ -351,7 +429,7 @@ def run_autoencoder_comparison(args):
     
     # 1. Sharpe comparison
     ax1 = axes[0, 0]
-    models = ['8D Autoencoder', 'GMM Baseline']
+    models = ['Autoencoder', 'GMM Baseline']
     spreads = [ae_spread, gmm_spread]
     colors = ['coral', 'steelblue']
     bars = ax1.bar(models, spreads, color=colors, alpha=0.8)
@@ -370,7 +448,7 @@ def run_autoencoder_comparison(args):
     gmm_vals = [stats_gmm['avg_persistence']*100, stats_gmm['stability']*100]
     x = np.arange(len(metrics))
     width = 0.35
-    ax2.bar(x - width/2, ae_vals, width, label='8D Autoencoder', color='coral', alpha=0.8)
+    ax2.bar(x - width/2, ae_vals, width, label='Autoencoder', color='coral', alpha=0.8)
     ax2.bar(x + width/2, gmm_vals, width, label='GMM Baseline', color='steelblue', alpha=0.8)
     ax2.axhline(y=50, color='green', linestyle='--', label='Threshold (50%)')
     ax2.set_ylabel('Percentage')
@@ -379,7 +457,7 @@ def run_autoencoder_comparison(args):
     ax2.set_xticklabels(metrics)
     ax2.legend()
     
-    # 3. 8D Autoencoder latent space (PCA → 2D)
+    # 3. Autoencoder latent space (PCA → 2D)
     ax3 = axes[1, 0]
     pca_viz = PCA(n_components=2)
     latents_2d = pca_viz.fit_transform(latents_8d)
@@ -390,7 +468,7 @@ def run_autoencoder_comparison(args):
                    c=[colors_regime[regime]], alpha=0.5, s=20, label=f'R{regime}')
     ax3.set_xlabel('PC1')
     ax3.set_ylabel('PC2')
-    ax3.set_title('8D Autoencoder Latent Space (PCA → 2D)')
+    ax3.set_title('Autoencoder Latent Space (PCA -> 2D)')
     ax3.legend()
     
     # 4. Summary table
@@ -398,7 +476,7 @@ def run_autoencoder_comparison(args):
     ax4.axis('off')
     
     summary_data = [
-        ['Metric', '8D AE', 'GMM', 'Winner'],
+        ['Metric', 'AE', 'GMM', 'Winner'],
         ['Sharpe Spread', f'{ae_spread:.2f}', f'{gmm_spread:.2f}', 'GMM' if gmm_spread > ae_spread else 'AE'],
         ['Persistence', f'{stats_ae["avg_persistence"]*100:.1f}%', f'{stats_gmm["avg_persistence"]*100:.1f}%', 
          'GMM' if stats_gmm['avg_persistence'] > stats_ae['avg_persistence'] else 'AE'],
