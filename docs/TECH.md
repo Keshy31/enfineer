@@ -1,8 +1,8 @@
 # Technical Architecture: Data Layer
 
-**Version 1.2**
+**Version 1.3**
 
-**Date: December 31, 2025**
+**Date: January 2, 2026**
 
 ---
 
@@ -571,30 +571,157 @@ results = wf.fit_predict(features, get_stationary_features())
 
 ---
 
-## Validated Results (December 2025)
+## Data Coverage Requirements
 
-### Walk-Forward GMM Baseline
+### Symbol Availability Matrix
+
+The combined feature pipeline requires alignment across multiple data sources. Not all symbols have equal historical coverage:
+
+| Symbol | Description | Available From | Bottleneck? |
+|--------|-------------|----------------|-------------|
+| BTC-USD | Bitcoin Price | 2014-09-17 | No |
+| ^TNX | 10-Year Treasury Yield | 2014-01-02 | No |
+| DX-Y.NYB | US Dollar Index | 2014-01-02 | No |
+| GLD | Gold ETF | 2014-01-02 | No |
+| **^IRX** | 3-Month Treasury Yield | 2017-01-03 | **Bottleneck** |
+| **^IXIC** | Nasdaq Composite | 2017-01-03 | **Bottleneck** |
+| **^VIX** | Volatility Index | 2017-01-03 | **Bottleneck** |
+| **CL=F** | Crude Oil Futures | 2017-01-03 | **Bottleneck** |
+
+### Optimal Date Range
+
+The effective date range is constrained by the **bottleneck symbols** (^IRX, ^IXIC, ^VIX, CL=F):
+
+| Parameter | Value | Rationale |
+|-----------|-------|-----------|
+| **Start Date** | 2018-01-01 | All bottleneck symbols available; full year boundary |
+| **End Date** | Present | Use all available recent data |
+| **Expected Samples** | ~2,900 | vs ~2,168 with 2020 start (+33% improvement) |
+
+### Data Utilization Best Practices
+
+1. **Always use the full available date range** - More data improves statistical power
+2. **Verify end date coverage** - Ensure walk-forward uses data up to latest available
+3. **Re-fetch periodically** - Cached data may be stale; use `force_refresh=True` quarterly
+4. **Check for gaps** - Macro symbols have weekends/holidays; alignment handles this automatically
+
+---
+
+## Model Architecture Clarification
+
+### The Two-Stage Pipeline
+
+Both the baseline and autoencoder approaches use a **two-stage pipeline**:
+
+```
+BASELINE PIPELINE:
+┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
+│  Raw Features   │────▶│      PCA        │────▶│      GMM        │────▶ Regime Labels
+│   (28D static)  │     │ (Linear, ~17D)  │     │  (K clusters)   │
+└─────────────────┘     └─────────────────┘     └─────────────────┘
+       Stage 1: Representation Learning          Stage 2: Clustering
+
+
+AUTOENCODER PIPELINE:
+┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
+│  Raw Features   │────▶│   LSTM + Dense  │────▶│      GMM        │────▶ Regime Labels
+│ (9D x 30 + 19D) │     │ (Nonlinear, ND) │     │  (K clusters)   │
+└─────────────────┘     └─────────────────┘     └─────────────────┘
+       Stage 1: Representation Learning          Stage 2: Clustering
+```
+
+**Key Insight**: The autoencoder is NOT a replacement for GMM. It is an alternative **representation learner** that competes with PCA. Both approaches end with GMM clustering.
+
+### What We're Actually Comparing
+
+| Method | Stage 1 (Representation) | Stage 2 (Clustering) |
+|--------|-------------------------|---------------------|
+| Random Baseline | None | Random assignment |
+| PCA + GMM | PCA (linear projection) | GMM |
+| AE + GMM | Autoencoder (nonlinear) | GMM |
+
+The scientific question is: **Does the autoencoder's nonlinear learned representation outperform PCA's linear projection for regime detection?**
+
+### Autoencoder Architecture Details
+
+```
+Input:
+├── Temporal: 9 features x 30 timesteps (OHLCV-derived)
+└── Macro: 19 features (yields, dollar, VIX, correlations)
+
+Encoder:
+├── LSTM Branch: temporal → 64 hidden → 2 layers
+├── Dense Branch: macro → 32 hidden
+└── Fusion Layer: concatenate → latent_dim (8D or 12D)
+
+Decoder:
+├── Temporal Decoder: latent → LSTM → 9 x 30 reconstruction
+└── Macro Decoder: latent → Dense → 19 reconstruction
+
+Loss:
+    L_total = L_temporal_recon + λ * L_macro_recon
+    (λ = 2.0 to force macro awareness)
+```
+
+### GMM Clustering on Latent Space
+
+After encoding, the latent vectors are clustered using GMM:
+
+```python
+# During training (per walk-forward fold):
+latents_train = autoencoder.encode(X_train)
+gmm = GaussianMixture(n_components=K, covariance_type='full')
+gmm.fit(latents_train)
+
+# During testing (out-of-sample):
+latents_test = autoencoder.encode(X_test)
+regime_labels = gmm.predict(latents_test)  # OOS prediction
+```
+
+### Samples-per-Parameter Considerations
+
+GMM with full covariance requires sufficient samples to avoid overfitting:
+
+| Latent Dim | GMM Params (K=8) | Min Samples | Safe Ratio |
+|------------|------------------|-------------|------------|
+| 8D | ~400 | 800 | 2x |
+| 12D | ~720 | 1,440 | 2x |
+| 16D | ~1,200 | 2,400 | 2x |
+
+**Recommendation**: Use `covariance_type='diag'` for higher dimensions to reduce parameter count.
+
+---
+
+## Validated Results (January 2026)
+
+**Status**: Results pending re-validation with corrected methodology.
+
+### Walk-Forward GMM Baseline (Validated)
 
 | Metric | Value |
 |--------|-------|
 | Out-of-Sample Days | 1,260 |
 | Optimal Clusters (BIC) | 8 |
 | PCA Dimensions | 17 |
-| Sharpe Spread | 3.50 |
-| Best Regime Sharpe | 2.29 (Regime 7) |
-| Worst Regime Sharpe | -1.21 (Regime 0) |
-| Strategy Sharpe | 1.03 |
-| Strategy Return | +506% |
-| Buy & Hold Return | +253% |
+| Sharpe Spread | 7.07 |
+| Best Regime Sharpe | 6.55 (Regime 2) |
+| Worst Regime Sharpe | -0.52 (Regime 1) |
+| Strategy Sharpe | 1.12 |
+| Significant Regimes | 2/8 |
 
-### LSTM-Autoencoder (12D Latent)
+### LSTM-Autoencoder (Pending Re-validation)
 
-| Metric | Value |
-|--------|-------|
-| Latent Dimensions | 12 |
-| Samples per Param | ~7.3x |
-| Improvement vs 8D | -30% MSE |
-| Recommendation | **12D** |
+Previous results used incorrect comparison methodology (see EXPERIMENTS.md, Experiment 10). Re-validation in progress using:
 
-**Conclusion**: 12D latent space provides the optimal trade-off between reconstruction accuracy and clustering stability.
+1. **Unified walk-forward framework** - Same splits for all methods
+2. **Correct sweep metric** - OOS Sharpe spread, not reconstruction loss
+3. **Extended data** - 2018-2025 (vs previous 2020-2025)
+
+| Metric | Previous (Invalid) | Pending |
+|--------|-------------------|---------|
+| Latent Dimensions | 12D | TBD |
+| Comparison Method | In-sample GMM baseline | Walk-forward |
+| Data Range | 2020-2025 | 2018-2025 |
+
+**Note**: The 12D recommendation based on reconstruction loss may not hold when optimizing for regime detection quality. Corrected sweep will determine true optimal dimension.
 

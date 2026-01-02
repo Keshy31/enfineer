@@ -203,3 +203,141 @@ We can find the optimal latent dimension ("The Elbow") that balances reconstruct
 
 **Impact:**
 Model now distinguishes "Risk-On" vs "Risk-Off" with explicit macro drivers.
+
+---
+
+## Experiment 10: Methodology Corrections
+
+**Date:** January 2, 2026  
+**Status:** 🔧 IN PROGRESS
+
+### Discovery
+
+A comprehensive audit of the testing methodology revealed several critical issues that may invalidate previous autoencoder results.
+
+### Issue 1: In-Sample GMM Baseline in Testing
+
+**Location:** `scripts/test_autoencoder_rigor.py`, lines 230-237
+
+**Problem:** The GMM baseline comparison was fitted **in-sample on test data**:
+
+```python
+# WRONG (what the code did):
+scaler = StandardScaler()
+X_gmm_scaled = scaler.fit_transform(X_test)  # Fits on TEST data!
+gmm_baseline = GaussianMixture(...).fit(X_gmm_pca)  # Fits on TEST data!
+```
+
+**Impact:** The GMM baseline "cheated" by seeing the test data during fitting, making autoencoder comparison unfair. GMM appeared to perform better than it would in true out-of-sample testing.
+
+**Fix:** Both methods must use identical walk-forward splits where models are trained on TRAIN data and evaluated on TEST data.
+
+### Issue 2: Wrong Metric in Hyperparameter Sweep (Experiment 5)
+
+**Problem:** The latent dimension sweep optimized for **reconstruction loss (MSE)**, not **regime detection quality (Sharpe spread)**.
+
+```python
+# What the sweep optimized:
+metric = validation_reconstruction_loss  # Lower is "better"
+
+# What actually matters for trading:
+metric = out_of_sample_sharpe_spread  # Higher regime separation
+```
+
+**Impact:** The "optimal" 12D recommendation may not hold when using the correct metric. A model that reconstructs well might cluster poorly.
+
+**Fix:** Re-run sweep using OOS Sharpe spread as primary metric.
+
+### Issue 3: Data Underutilization
+
+**Problem:** Training used data from 2020-01-01, but bottleneck symbols (^VIX, ^IXIC, etc.) have data available back to 2017.
+
+**Impact:** Lost ~730 days of training history (~33% more data).
+
+**Fix:** Extend data fetch to 2018-01-01 for all symbols.
+
+### Issue 4: Incomplete Data Coverage
+
+**Problem:** The 12D model's OOS period ended at 2025-10-19, but data was available through 2025-12-31.
+
+**Impact:** Missing ~73 trading days of recent validation data.
+
+**Fix:** Ensure walk-forward loop uses all available data.
+
+### Experiments Requiring Re-Validation
+
+| Experiment | Status | Issue |
+|------------|--------|-------|
+| Exp 3: 3D Autoencoder | ⚠️ Uncertain | Comparison may have been unfair |
+| Exp 4: 8D Autoencoder | ⚠️ Uncertain | Comparison may have been unfair |
+| Exp 5: Latent Sweep | ❌ Invalid | Used wrong metric |
+
+### Corrective Actions
+
+1. **Create unified test framework** (`test_unified_comparison.py`)
+   - Run all methods through identical walk-forward splits
+   - Compare: Random, PCA+GMM, AE+GMM
+   - Metric: OOS Sharpe spread, persistence, cost survival
+
+2. **Re-run hyperparameter sweep** (`sweep_latent_dim_corrected.py`)
+   - Use walk-forward validation (not fixed 80/20)
+   - Primary metric: OOS Sharpe spread
+   - Test dimensions: [4, 6, 8, 10, 12, 14]
+
+3. **Extend data coverage**
+   - Fetch 2018-01-01 to present for all symbols
+   - Re-cache combined features
+
+### Lesson Learned
+
+**Apples-to-apples comparison requires identical test conditions.** Different methods must:
+- Use the same train/test splits
+- Be evaluated on the same OOS dates
+- Be measured by downstream performance (trading metrics), not intermediate losses
+
+---
+
+## Experiment 11: Unified Walk-Forward Comparison
+
+**Date:** January 2, 2026  
+**Status:** 🔄 PENDING (blocked by Experiment 10 fixes)
+
+### Hypothesis
+
+With corrected methodology, we can determine if the autoencoder provides genuine value over PCA+GMM baseline.
+
+### Method
+
+- Unified walk-forward framework with identical splits
+- Extended data: 2018-01-01 to 2025-12-31
+- Compare: Random, PCA+GMM, AE(optimal_dim)+GMM
+- Metrics: OOS Sharpe spread, persistence, net Sharpe after costs
+
+### Expected Deliverables
+
+1. Fair comparison table showing all methods on equal footing
+2. Bootstrap confidence intervals for all metrics
+3. Definitive answer: Does AE beat PCA for regime detection?
+
+---
+
+## Experiment 12: Corrected Hyperparameter Sweep
+
+**Date:** January 2, 2026  
+**Status:** 🔄 PENDING
+
+### Hypothesis
+
+The true optimal latent dimension (when optimizing for trading performance) may differ from the reconstruction-optimal 12D.
+
+### Method
+
+- Walk-forward sweep (not fixed split)
+- Primary metric: OOS Sharpe spread
+- Secondary: Regime persistence, cost survival
+- Dimensions: [4, 6, 8, 10, 12, 14]
+
+### Expected Output
+
+- True optimal latent dimension based on regime quality
+- Comparison showing reconstruction loss vs trading performance correlation

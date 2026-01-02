@@ -1,10 +1,10 @@
 # The Simons-Dalio Regime Engine: Project Overview
 
-**Version 1.3**
+**Version 1.4**
 
-**Date: December 31, 2025**
+**Date: January 2, 2026**
 
-**Status: Optimization & Hyperparameter Tuning**
+**Status: Methodology Correction & Re-Validation**
 
 ---
 
@@ -81,23 +81,23 @@ $$L_{total} = L_{price\_recon} + \lambda \cdot L_{macro\_recon}$$
 
 Where $\lambda$ is a weighting factor that penalizes the network heavily if it fails to encode the macro state, forcing the latent space to respect economic reality.
 
-### 4.3. Latent Dimensionality (Updated December 31, 2025)
+### 4.3. Latent Dimensionality (Updated January 2, 2026)
 
-Our initial 3D and 8D experiments were superseded by a comprehensive hyperparameter sweep using the Elbow Method.
+Our initial 3D and 8D experiments were superseded by a hyperparameter sweep. However, **methodology concerns have been identified** (see EXPERIMENTS.md, Experiment 10).
 
 | Configuration | Validation Loss | Samples/Param | Recommendation |
 |---------------|----------------|---------------|----------------|
 | **3D** | High (~2.0) | High | Too constrained |
 | **8D** | 1.3051 | ~14.0x | Good baseline |
-| **12D** | **0.9301** | **~7.3x** | **Optimal** |
+| **12D** | **0.9301** | **~7.3x** | **Pending re-validation** |
 | **16D** | 0.8793 | ~3.7x | Diminishing returns |
 
-**Key Finding:** 12 Dimensions represents the "Goldilocks" zone. It reduces validation loss by nearly 30% compared to 8D, capturing significantly more market nuance, while maintaining a safe ratio of ~7.3 samples per parameter for GMM clustering.
+**Important Note (January 2026):** The original sweep optimized for **reconstruction loss**, not **regime detection quality**. A model that reconstructs well may cluster poorly. Re-validation using OOS Sharpe spread as the primary metric is in progress.
 
-**Recommended Approach:**
-- Train with **12 latent dimensions** for optimal balance.
-- Use **t-SNE or UMAP** projection to visualize in 2D/3D.
-- This maintains both predictive power and clustering stability.
+**Current Status:**
+- Original 12D recommendation: Based on reconstruction loss (potentially invalid)
+- Corrected sweep: Pending, will use OOS Sharpe spread
+- True optimal dimension: TBD after corrected sweep completes
 
 ---
 
@@ -150,14 +150,54 @@ Standard backtesting fits models on all data, then tests on the same data. This 
 
 Non-stationary features (raw price levels, yield levels) cause GMM to cluster **time periods** rather than **market regimes**. The final system uses ONLY log returns, Z-scores, and rolling correlations.
 
-### 7.3. Validated Baseline Performance (December 2025)
+### 7.3. Data Utilization Requirements (Added January 2026)
+
+Proper validation requires maximizing available data:
+
+| Parameter | Requirement | Rationale |
+|-----------|-------------|-----------|
+| **Start Date** | 2018-01-01 | All macro symbols available (^VIX, ^IXIC, ^IRX, CL=F) |
+| **End Date** | Latest available | Must use all recent data for validation |
+| **Min Train Window** | 504 days (2 years) | Sufficient for stable GMM estimation |
+| **Test Window** | 126 days (6 months) | Balance between granularity and stability |
+| **Gap/Purge** | 30 days | Prevent feature leakage |
+
+**Data Bottlenecks**: The following symbols constrain the start date:
+- `^IRX` (3-Month Yield): Available from 2017-01-03
+- `^IXIC` (Nasdaq): Available from 2017-01-03
+- `^VIX` (Volatility): Available from 2017-01-03
+- `CL=F` (Crude Oil): Available from 2017-01-03
+
+### 7.4. Unified Comparison Framework (Added January 2026)
+
+Fair comparison between methods requires **identical test conditions**:
+
+```
+UNIFIED WALK-FORWARD PROTOCOL:
+
+For each fold:
+    1. Split data into train/test using SAME indices
+    2. Train ALL methods on train set only:
+       - Random: No training needed
+       - PCA+GMM: Fit PCA on train, fit GMM on train latents
+       - AE+GMM: Train AE on train, fit GMM on train latents
+    3. Evaluate ALL methods on test set (OOS):
+       - Apply trained transformations to test data
+       - Predict regime labels
+       - Compute regime Sharpes from test returns
+    4. Compare metrics on SAME test dates
+```
+
+### 7.5. Validated Baseline Performance (January 2026)
 
 | Metric | Walk-Forward GMM | Notes |
 |--------|------------------|-------|
-| OOS Sharpe Spread | 3.50 | Regime 7: 2.29, Regime 0: -1.21 |
-| Strategy Sharpe | 1.03 | Out-of-sample only |
-| Strategy Return | +506% | vs Buy-Hold +253% |
-| Time in Market | 74% | Avoided worst regimes |
+| OOS Sharpe Spread | 7.07 | Regime 2: 6.55, Regime 1: -0.52 |
+| Strategy Sharpe | 1.12 | Out-of-sample only |
+| Significant Regimes | 2/8 | Bootstrap CI excludes 0 |
+| Regime Persistence | 56.8% | Avg daily persistence |
+
+**Autoencoder Results**: Pending re-validation with corrected methodology (see Section 9).
 
 ---
 
@@ -185,18 +225,28 @@ Alpha must survive realistic trading friction (~16 bps round-trip). Net Sharpe a
 
 ## 9. Roadmap to True Alpha
 
-### Phase 1: Statistical Foundation (Current Priority)
+### Phase 0: Methodology Correction (CURRENT - January 2026)
 | Task | Status | Impact |
 |------|--------|--------|
-| Bootstrap CI for Sharpe | Implemented | Know if signal is real |
-| Transaction cost model | Implemented | Know if tradeable |
-| Regime transition matrix | Implemented | Understand dynamics |
-| Factor attribution | Implemented | Prove orthogonal alpha |
+| Document methodology issues | ✅ Completed | Clear problem statement |
+| Extend data to 2018-01-01 | 🔄 In Progress | +33% more training data |
+| Create unified test framework | 🔄 In Progress | Fair method comparison |
+| Re-run latent dim sweep | Pending | Find TRUE optimal dim |
+| Validate AE vs PCA+GMM | Pending | Definitive answer |
+
+### Phase 1: Statistical Foundation
+| Task | Status | Impact |
+|------|--------|--------|
+| Bootstrap CI for Sharpe | ✅ Implemented | Know if signal is real |
+| Transaction cost model | ✅ Implemented | Know if tradeable |
+| Regime transition matrix | ✅ Implemented | Understand dynamics |
+| Factor attribution | ✅ Implemented | Prove orthogonal alpha |
 
 ### Phase 2: Model Improvements
 | Task | Status | Impact |
 |------|--------|--------|
-| 12D Hyperparameter Sweep | ✅ Completed | +30% Accuracy vs 8D |
+| 12D Hyperparameter Sweep | ⚠️ Needs Re-validation | Wrong metric used |
+| Corrected Sweep (OOS Sharpe) | Pending | True optimal architecture |
 | Ensemble (GMM + AE + HMM) | Pending | Robustness |
 | Uncertainty quantification | Pending | Know when to sit out |
 
@@ -220,10 +270,23 @@ Alpha must survive realistic trading friction (~16 bps round-trip). Net Sharpe a
 
 The Simons-Dalio Regime Engine represents a synthesis of three distinct investment philosophies: geometric modeling, macroeconomic context, and rigorous risk management.
 
-**Key Achievements (v1.3):**
+**Key Achievements (v1.4):**
 1. Walk-forward validated regime detection (no look-ahead bias)
-2. Validated optimal architecture (12D latent space)
-3. Integration of "Dalio" macro features (Yield Curve, VIX, Oil)
+2. Integration of "Dalio" macro features (Yield Curve, VIX, Oil)
+3. Comprehensive statistical rigor framework (Bootstrap CI, costs, transitions)
+4. **Identified and documented methodology issues** requiring correction
 
-**Current Focus:**
-The 12D autoencoder provides the optimal balance of signal capture and clustering stability. Our focus now shifts to final model training and deployment of the live signal pipeline.
+**Methodology Corrections in Progress:**
+- Previous autoencoder comparisons used unfair testing (in-sample GMM baseline)
+- Previous hyperparameter sweep used wrong metric (reconstruction loss vs trading performance)
+- Data utilization was suboptimal (2020 start vs available 2018 start)
+
+**Current Focus (January 2026):**
+Before claiming autoencoder superiority, we must:
+1. Extend data coverage to 2018-2025
+2. Create unified walk-forward comparison framework
+3. Re-run hyperparameter sweep with OOS Sharpe spread metric
+4. Generate definitive AE vs PCA+GMM comparison
+
+**Expected Outcome:**
+A scientifically valid answer to: "Does the autoencoder's nonlinear representation outperform PCA's linear projection for regime detection?"
