@@ -1,6 +1,30 @@
 """
 8D Autoencoder Statistical Rigor Test
 ======================================
+
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+!!                         DEPRECATED                                !!
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+This script is DEPRECATED as of January 2, 2026.
+
+REASON: The GMM baseline comparison in this script is FLAWED.
+        Lines 230-237 fit the GMM baseline IN-SAMPLE on test data,
+        creating an unfair comparison where the baseline "cheats".
+
+USE INSTEAD:
+    python scripts/test_unified_comparison.py
+    
+    This script uses proper walk-forward validation where ALL methods
+    (Random, PCA+GMM, AE+GMM) are trained on train data and evaluated
+    on the SAME test data.
+
+See docs/EXPERIMENTS.md, Experiment 10 for full details on the
+methodology issues discovered.
+
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+Original description (kept for reference):
 Apply the same statistical validation to autoencoder results
 as we did for the GMM baseline.
 
@@ -8,6 +32,14 @@ Run from project root:
     python scripts/test_autoencoder_rigor.py
     python scripts/test_autoencoder_rigor.py --model checkpoints/my_model
 """
+
+import warnings
+warnings.warn(
+    "test_autoencoder_rigor.py is DEPRECATED. "
+    "Use test_unified_comparison.py instead for fair method comparison.",
+    DeprecationWarning,
+    stacklevel=2
+)
 
 import sys
 import json
